@@ -1,0 +1,31 @@
+# Odin build artefacts
+*.bin
+*.exe
+*.obj
+*.o
+*.a
+*.so
+*.dylib
+
+# Test output
+tests/_failed/
+bench/results/
+
+# Test fonts — not committed. Fetched on demand by the CI workflow
+# (.github/workflows/ci.yml), and fetched manually by contributors
+# running tests locally. See tests/fonts/README.md for the URL list.
+tests/fonts/*.ttf
+tests/fonts/*.otf
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal design doc — kept locally for reference but not public.
+PROPOSAL.md

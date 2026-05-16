@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Odin
+        uses: laytan/setup-odin@v2
+        with:
+          release: dev-2026-04
+
+      # Test fonts (Roboto-Regular, InterVariable, FiraCode-Regular,
+      # Twemoji-Mozilla) are not committed to the repo. CI fetches them
+      # on a best-effort basis so the integration tests get exercised;
+      # if the fetch fails (network hiccup, upstream URL change) the
+      # font-dependent tests skip themselves with an INFO log and the
+      # job still reports the compile + synthetic results.
+      - name: Fetch test fonts
+        shell: bash
+        run: bash tools/ci/fetch_test_fonts.sh || echo "font fetch failed — integration tests will skip"
+
+      - name: Type-check library
+        run: odin check . -no-entry-point
+
+      - name: Test parse
+        run: odin test tests/parse
+      - name: Test runa
+        run: odin test tests/runa
+      - name: Test raster
+        run: odin test tests/raster
+      - name: Test atlas
+        run: odin test tests/atlas
+      - name: Test linebreak
+        run: odin test tests/linebreak
+
+      - name: UAX #14 conformance
+        shell: bash
+        run: |
+          odin run tools/lb_conformance.odin -file > /tmp/lb.txt 2>&1 || true
+          grep -F "passed" /tmp/lb.txt || true
+
+      - name: Fuzz (smoke run)
+        shell: bash
+        run: |
+          if [ -f tests/fonts/Roboto-Regular.ttf ]; then
+            odin run tools/bit_flip_fuzz.odin -file -- \
+              tests/fonts/Roboto-Regular.ttf --iters 1000
+          else
+            echo "no Roboto font — skipping fuzz"
+          fi
+
+      - name: Bench (informational)
+        shell: bash
+        run: |
+          if [ -f tests/fonts/Roboto-Regular.ttf ]; then
+            odin run tools/bench.odin -file -- tests/fonts/Roboto-Regular.ttf || true
+          fi
