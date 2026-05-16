@@ -69,13 +69,23 @@ odin test  tests/raster               # rasterizer smoke tests
 odin test  tests/runa                 # facade integration tests
 ```
 
-The runnable demo:
+The runnable demos:
 
 ```
+# PGM-output, no GUI dependency — shapes Latin + emoji, writes a PPM
+# image you can open in any viewer.
 odin run examples/hello_world -- \
     tests/fonts/Roboto-Regular.ttf \
     tests/fonts/Twemoji-Mozilla.ttf \
     /tmp/hello.ppm
+
+# Live raylib window — shows OpenType shaping, kerning, ligatures,
+# and tinted text running through raylib's stock DrawTexturePro.
+# ~50 lines of glue between runa and the renderer; demonstrates that
+# runa is renderer-agnostic — works in any Odin project that can
+# sample a texture and draw a quad (sokol_gfx, custom Vulkan / Metal,
+# even a pure CPU pixel buffer).
+odin run examples/raylib
 ```
 
 Test fonts are not committed — fetch them into `tests/fonts/` per
