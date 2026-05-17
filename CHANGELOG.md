@@ -9,6 +9,26 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.0.1 — 2026-05-17
+
+### Fixed
+
+- **Slice out-of-bounds on invalid UTF-8 in run-splitting walks**
+  (`SIGILL` / "Illegal instruction" crash). The codepoint loops in
+  `layout_paragraph`, `measure_text`, `measure_text_cached`,
+  `wrap_glyphs`, and `bidi.resolve_levels` derived the per-codepoint
+  byte advance from the decoded rune *value* (`utf8_byte_len(r)`).
+  For valid UTF-8 that matched Odin's range-over-string. For invalid
+  UTF-8 the iterator returns `U+FFFD` after consuming 1 raw byte,
+  while `utf8_byte_len(U+FFFD)` returns 3 — so the byte counter
+  over-counted by 2 per invalid byte and eventually exceeded
+  `len(text)`. The next slice into `text` then went out of bounds
+  and the runtime trapped. Replaced the walks with
+  `utf8.decode_rune_in_string` so the byte advance always matches
+  the decoder's actual consumption. Surfaces in any caller passing
+  text from the network, clipboard, or partially-decoded buffers;
+  triggered in practice by an incoming Nostr chat message.
+
 ## 1.0.0 — 2026-05-16
 
 Closes the v1.0 punch list. UAX #9 bidi hits 100.00 % (was
