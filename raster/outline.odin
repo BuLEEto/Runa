@@ -27,7 +27,7 @@ Edge :: struct {
 // `tolerance` is the maximum allowed deviation of a flattened curve
 // from the true curve, in output (pixel) units. 0.25 pixels is the
 // canonical choice — visually indistinguishable, computationally cheap.
-flatten_outline :: proc(o: ^parse.Outline, scale_x, scale_y, baseline: f32, edges: ^[dynamic]Edge, tolerance: f32 = 0.25) {
+flatten_outline :: proc(o: ^parse.Outline, scale_x, scale_y, baseline: f32, edges: ^[dynamic]Edge, tolerance: f32 = 0.25, hint: ^Hint_Snap = nil) {
 	clear(edges)
 	if len(o.contour_ends) == 0 { return }
 
@@ -38,21 +38,25 @@ flatten_outline :: proc(o: ^parse.Outline, scale_x, scale_y, baseline: f32, edge
 			contour_start = end_idx + 1
 			continue
 		}
-		flatten_contour(o.points[contour_start:end_idx + 1], scale_x, scale_y, baseline, edges, tolerance)
+		flatten_contour(o.points[contour_start:end_idx + 1], scale_x, scale_y, baseline, edges, tolerance, hint)
 		contour_start = end_idx + 1
 	}
 }
 
 @(private)
-flatten_contour :: proc(pts: []parse.Outline_Point, sx, sy, baseline: f32, edges: ^[dynamic]Edge, tol: f32) {
+flatten_contour :: proc(pts: []parse.Outline_Point, sx, sy, baseline: f32, edges: ^[dynamic]Edge, tol: f32, hint: ^Hint_Snap) {
 	n := len(pts)
 	if n < 2 { return }
 
 	// Project a font-unit point into pixel space, y-flipped so the
 	// bitmap can walk top-down. `baseline` is the y offset (in pixel
-	// units) where the baseline of the glyph lands.
-	to_px :: proc(p: parse.Outline_Point, sx, sy, baseline: f32) -> (x, y: f32) {
-		return f32(p.x) * sx, baseline - f32(p.y) * sy
+	// units) where the baseline of the glyph lands. When `hint` is
+	// non-nil the unhinted pre-scaled Y is run through the blue-zone
+	// snap before subtracting from baseline.
+	to_px :: proc(p: parse.Outline_Point, sx, sy, baseline: f32, hint: ^Hint_Snap) -> (x, y: f32) {
+		y_pre := f32(p.y) * sy
+		if hint != nil && hint.valid { y_pre = apply_hint_y(y_pre, hint^) }
+		return f32(p.x) * sx, baseline - y_pre
 	}
 
 	// Find the first on-curve point. If none — the whole contour is
@@ -79,14 +83,14 @@ flatten_contour :: proc(pts: []parse.Outline_Point, sx, sy, baseline: f32, edges
 			}
 			append(&expanded, mid)
 		}
-		flatten_contour(expanded[:], sx, sy, baseline, edges, tol)
+		flatten_contour(expanded[:], sx, sy, baseline, edges, tol, hint)
 		return
 	}
 
 	// Walk the contour starting from `first_on`, wrapping back to it on
 	// the last iteration to close the loop.
 	start_pt := pts[first_on]
-	cur_x, cur_y := to_px(start_pt, sx, sy, baseline)
+	cur_x, cur_y := to_px(start_pt, sx, sy, baseline, hint)
 
 	pending_off    := false
 	pending_off_pt: parse.Outline_Point
@@ -101,9 +105,9 @@ flatten_contour :: proc(pts: []parse.Outline_Point, sx, sy, baseline: f32, edges
 			p.on_curve = true
 		}
 		if p.on_curve {
-			ex, ey := to_px(p, sx, sy, baseline)
+			ex, ey := to_px(p, sx, sy, baseline, hint)
 			if pending_off {
-				cx, cy := to_px(pending_off_pt, sx, sy, baseline)
+				cx, cy := to_px(pending_off_pt, sx, sy, baseline, hint)
 				emit_quadratic(cur_x, cur_y, cx, cy, ex, ey, edges, tol)
 				pending_off = false
 			} else {
@@ -118,8 +122,8 @@ flatten_contour :: proc(pts: []parse.Outline_Point, sx, sy, baseline: f32, edges
 					y        = (pending_off_pt.y + p.y) / 2,
 					on_curve = true,
 				}
-				mx, my := to_px(mid, sx, sy, baseline)
-				cx, cy := to_px(pending_off_pt, sx, sy, baseline)
+				mx, my := to_px(mid, sx, sy, baseline, hint)
+				cx, cy := to_px(pending_off_pt, sx, sy, baseline, hint)
 				emit_quadratic(cur_x, cur_y, cx, cy, mx, my, edges, tol)
 				cur_x, cur_y = mx, my
 			}

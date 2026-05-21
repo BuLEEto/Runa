@@ -191,6 +191,10 @@ Font :: struct {
 	_base_descent:  f32,
 	_base_line_gap: f32,
 	_index_to_loc_format: parse.Index_To_Loc_Format,
+	// Latin autohinter blue zones, sampled from reference glyphs at
+	// font load. `valid = false` when the font lacks the reference
+	// codepoints (non-Latin scripts) — autohint is then a no-op.
+	_hint_metrics: raster.Hint_Metrics,
 }
 
 // Shaped_Glyph is one positioned glyph emitted by `shape_text`. The
@@ -873,7 +877,56 @@ font_load :: proc(data: []u8, allocator := context.allocator) -> (f: Font, err: 
 	f._base_descent  = f.descent
 	f._base_line_gap = f.line_gap
 
+	// Sample reference glyph extents to populate blue zones for the
+	// Latin autohinter. No-op for fonts missing the reference codepoints.
+	f._hint_metrics = sample_hint_metrics(&f)
+
 	return
+}
+
+// sample_hint_metrics extracts blue zone Y positions from a small
+// fixed set of Latin reference glyphs ('H' for cap-height, 'x' for
+// x-height, 'p' for descender, 'l' for ascender). Returns
+// `Hint_Metrics{valid = false}` if any of the references is missing
+// — typical of non-Latin fonts, where the autohinter would only
+// damage glyph shapes if it ran.
+@(private)
+sample_hint_metrics :: proc(f: ^Font) -> raster.Hint_Metrics {
+	out: raster.Hint_Metrics
+	cap_h, cap_ok := sample_glyph_y_max(f, 'H')
+	x_h,   x_ok   := sample_glyph_y_max(f, 'x')
+	asc,   a_ok   := sample_glyph_y_max(f, 'l')
+	dsc,   d_ok   := sample_glyph_y_min(f, 'p')
+	if !(cap_ok && x_ok && a_ok && d_ok) { return out }
+	out.descender  = dsc
+	out.baseline   = 0
+	out.x_height   = x_h
+	out.cap_height = cap_h
+	out.ascender   = asc
+	out.valid      = true
+	return out
+}
+
+@(private)
+sample_glyph_y_max :: proc(f: ^Font, r: rune) -> (f32, bool) {
+	gid := font_lookup_glyph(f, r)
+	if gid == 0 { return 0, false }
+	o: Outline
+	defer outline_destroy(&o)
+	if font_glyph_outline(f, gid, &o) != .None { return 0, false }
+	if len(o.contour_ends) == 0 { return 0, false }
+	return f32(o.y_max), true
+}
+
+@(private)
+sample_glyph_y_min :: proc(f: ^Font, r: rune) -> (f32, bool) {
+	gid := font_lookup_glyph(f, r)
+	if gid == 0 { return 0, false }
+	o: Outline
+	defer outline_destroy(&o)
+	if font_glyph_outline(f, gid, &o) != .None { return 0, false }
+	if len(o.contour_ends) == 0 { return 0, false }
+	return f32(o.y_min), true
 }
 
 // apply_mvar_metrics recomputes the public ascent / descent /
@@ -921,7 +974,7 @@ font_color_layers :: proc(f: ^Font, gid: Glyph_ID, allocator := context.allocato
 // Mono glyphs go into the atlas's alpha pages; colour-base glyphs
 // (per `font_has_color_layers`) are composited via COLR layers and
 // packed into the RGBA pages.
-raster_glyph :: proc(font: ^Font, gid: Glyph_ID, size: f32, subpx_x: u8, atlas: ^Atlas, allocator := context.allocator) -> (slot: Atlas_Slot, err: Error) {
+raster_glyph :: proc(font: ^Font, gid: Glyph_ID, size: f32, subpx_x: u8, atlas: ^Atlas, allocator := context.allocator, hint: bool = false) -> (slot: Atlas_Slot, err: Error) {
 	if size <= 0 { err = .Invalid_Table; return }
 
 	// Scratch for the rasterizer's edge buffer.
@@ -975,7 +1028,13 @@ raster_glyph :: proc(font: ^Font, gid: Glyph_ID, size: f32, subpx_x: u8, atlas: 
 	if oerr != .None { err = oerr; return }
 	if len(outline.contour_ends) == 0 { return }
 
-	bm, xo, yo, rerr := raster.rasterize(&outline, font.units_per_em, size, &edges, subpx_x, context.temp_allocator)
+	hint_snap: raster.Hint_Snap
+	hint_ptr: ^raster.Hint_Snap = nil
+	if hint && font._hint_metrics.valid {
+		hint_snap = raster.hint_snap_for_size(font._hint_metrics, font.units_per_em, size)
+		hint_ptr = &hint_snap
+	}
+	bm, xo, yo, rerr := raster.rasterize(&outline, font.units_per_em, size, &edges, subpx_x, context.temp_allocator, hint_ptr)
 	if rerr != .None { err = .Invalid_Table; return }
 	defer raster.bitmap_destroy(&bm, context.temp_allocator)
 	if bm.width == 0 || bm.height == 0 { return }

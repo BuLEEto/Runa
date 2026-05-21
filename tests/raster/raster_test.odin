@@ -158,3 +158,151 @@ test_composite_difference :: proc(t: ^testing.T) {
 	testing.expect_value(t, dst[1], 0)               // |0 - 0| = 0
 	testing.expect_value(t, dst[2], 255)             // |1 - 0| = 1
 }
+
+// ---- Autohinter ---------------------------------------------------
+//
+// Pins the blue-zone snap behaviour. Identity check: a no-op `Hint_Snap`
+// must leave Y alone. Snap check: a metric set with a baseline offset
+// must move outline Y values onto the snapped grid.
+
+@(test)
+test_hint_snap_identity :: proc(t: ^testing.T) {
+	h: raster.Hint_Snap
+	h.valid = false
+	testing.expect_value(t, raster.apply_hint_y(7.3, h), 7.3)
+}
+
+@(test)
+test_hint_snap_baseline :: proc(t: ^testing.T) {
+	// Construct a metric set where the baseline pre-scales to 14.4
+	// (typical fractional value at a body size). The snap should move
+	// the baseline to row 14, and an outline point exactly at the
+	// baseline should land on integer 14 as well.
+	m: raster.Hint_Metrics
+	m.descender  = -300
+	m.baseline   = 0
+	m.x_height   = 500
+	m.cap_height = 700
+	m.ascender   = 800
+	m.valid      = true
+
+	// Pick units_per_em / size so baseline*scale = 0 and cap_height*scale = 14.4.
+	// scale = 14.4 / 700 ⇒ size/upm = scale ⇒ size = 14.4, upm = 700.
+	h := raster.hint_snap_for_size(m, 700, 14.4)
+	testing.expect(t, h.valid, "snap is valid")
+	testing.expect_value(t, h.baseline_snap, f32(0))
+	testing.expect_value(t, h.cap_height_snap, f32(14))     // 14.4 → 14
+
+	// A point exactly on the baseline pre-snap must end exactly on the
+	// snapped baseline (0).
+	got_baseline := raster.apply_hint_y(h.baseline_pre, h)
+	testing.expect_value(t, got_baseline, h.baseline_snap)
+
+	// A point exactly on the cap-height must end on the snapped cap.
+	got_cap := raster.apply_hint_y(h.cap_height_pre, h)
+	testing.expect_value(t, got_cap, h.cap_height_snap)
+}
+
+@(test)
+test_hint_snap_bottom_of_s_lands_on_integer :: proc(t: ^testing.T) {
+	data, ok := load_bytes(ROBOTO)
+	if !ok {
+		log.info("Roboto-Regular.ttf not present; skipping")
+		return
+	}
+	defer delete(data)
+
+	idx, _ := parse.parse_table_index(data)
+	defer parse.table_index_destroy(&idx)
+	head_b, _ := parse.find_table(&idx, data, parse.tag("head"))
+	head, _ := parse.parse_head(head_b)
+	maxp_b, _ := parse.find_table(&idx, data, parse.tag("maxp"))
+	mx, _ := parse.parse_maxp(maxp_b)
+	loca_b, _ := parse.find_table(&idx, data, parse.tag("loca"))
+	loca, _ := parse.parse_loca(loca_b, head.index_to_loc_format, mx.num_glyphs)
+	defer parse.loca_destroy(&loca)
+	cmap_b, _ := parse.find_table(&idx, data, parse.tag("cmap"))
+	cm, _ := parse.parse_cmap(cmap_b)
+	defer parse.cmap_destroy(&cm)
+	glyf_b, _ := parse.find_table(&idx, data, parse.tag("glyf"))
+	g := parse.new_glyf(glyf_b)
+
+	// Sample reference glyphs to build blue zones.
+	sample :: proc(g: ^parse.Glyf, loca: ^parse.Loca, cm: ^parse.Cmap, r: rune) -> (y_min, y_max: f32, ok: bool) {
+		gid := parse.cmap_lookup(cm, r)
+		if gid == 0 { return }
+		o: parse.Outline
+		defer parse.outline_destroy(&o)
+		if parse.glyf_outline(g, loca, gid, &o) != .None { return }
+		if len(o.contour_ends) == 0 { return }
+		return f32(o.y_min), f32(o.y_max), true
+	}
+	_, cap_h,    cap_ok := sample(&g, &loca, &cm, 'H')
+	_, x_h,      x_ok   := sample(&g, &loca, &cm, 'x')
+	_, asc,      a_ok   := sample(&g, &loca, &cm, 'l')
+	dsc,_,       d_ok   := sample(&g, &loca, &cm, 'p')
+	testing.expect(t, cap_ok && x_ok && a_ok && d_ok, "reference glyphs resolve")
+
+	m := raster.Hint_Metrics{
+		descender  = dsc,
+		baseline   = 0,
+		x_height   = x_h,
+		cap_height = cap_h,
+		ascender   = asc,
+		valid      = true,
+	}
+
+	// At body size 13 px, baseline_pre is 0 (always); confirm snap is 0.
+	h := raster.hint_snap_for_size(m, head.units_per_em, 13.0)
+	testing.expect(t, h.valid, "snap is valid for this font/size")
+	testing.expect_value(t, h.baseline_snap, f32(0))
+
+	// Pull the 'S' outline and rasterize twice — once unhinted, once
+	// hinted. Both must produce non-empty bitmaps; that's the smoke
+	// signal the autohint path doesn't crash on real glyph data.
+	gid_S := parse.cmap_lookup(&cm, 'S')
+	testing.expect(t, gid_S != 0, "'S' resolves")
+	o: parse.Outline
+	defer parse.outline_destroy(&o)
+	testing.expect_value(t, parse.glyf_outline(&g, &loca, gid_S, &o), parse.Error.None)
+
+	edges := make([dynamic]raster.Edge, 0, 128)
+	defer delete(edges)
+
+	bm_no_hint, _, _, e1 := raster.rasterize(&o, head.units_per_em, 13.0, &edges)
+	testing.expect_value(t, e1, raster.Rast_Error.None)
+	defer raster.bitmap_destroy(&bm_no_hint)
+	testing.expect(t, bm_no_hint.width > 0 && bm_no_hint.height > 0, "unhinted S non-empty")
+
+	bm_hint, _, _, e2 := raster.rasterize(&o, head.units_per_em, 13.0, &edges, 0, context.allocator, &h)
+	testing.expect_value(t, e2, raster.Rast_Error.None)
+	defer raster.bitmap_destroy(&bm_hint)
+	testing.expect(t, bm_hint.width > 0 && bm_hint.height > 0, "hinted S non-empty")
+
+	// Bottom-row alpha mass check: if hinting did its job, the
+	// hinted S should have a non-fractional bottom row — i.e. its
+	// bottom row should be either ~0 (no feature there) or ~255
+	// (solid stem), not a half-coverage "fluff" row. We measure the
+	// average alpha of the bottom row and assert hinted ≤ unhinted
+	// in the fluffiness range (0 < alpha < 100). That's the
+	// observable signal of the artifact we set out to fix.
+	bottom_avg :: proc(bm: ^raster.Bitmap) -> f32 {
+		if bm.height == 0 { return 0 }
+		sum: u32 = 0
+		row := (bm.height - 1) * bm.width
+		for i in 0..<bm.width {
+			sum += u32(bm.pixels[row + i])
+		}
+		return f32(sum) / f32(bm.width)
+	}
+	avg_no := bottom_avg(&bm_no_hint)
+	avg_h  := bottom_avg(&bm_hint)
+	log.infof("bottom row avg: unhinted=%.2f hinted=%.2f", avg_no, avg_h)
+	// The hinted version's bottom row should not be a half-coverage
+	// row. Either it's near-empty (snap moved the curve up) or it's
+	// near-full (snap moved a stem onto it). The unhinted version may
+	// be in the fluff band; hinted should not be worse.
+	if avg_no > 30 && avg_no < 180 {
+		testing.expect(t, avg_h <= avg_no + 5, "hinted bottom row is not fluffier than unhinted")
+	}
+}

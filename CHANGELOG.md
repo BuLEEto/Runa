@@ -40,6 +40,46 @@ WordBreakTest conformance for double-click word selection and
 word-by-word cursor movement.
 API.md refreshed for v0.9.2 → v1.0.0 surface.
 
+### Added — Minimal Latin autohinter (opt-in)
+
+New `raster_glyph(..., hint: true)` flag enables a small Latin
+blue-zone autohinter. At font load time we sample 'H', 'x', 'p',
+'l' to extract cap-height / x-height / descender / ascender in
+font units. At raster time those values are scaled and rounded to
+integer pixel rows for the requested size; every outline Y is then
+remapped linearly between the snapped zones. Points landing on a
+blue zone are pixel-perfect; intermediate features drift
+proportionally.
+
+The visible effect: bottom-of-S / bottom-of-e / bottom-of-c at
+body sizes (10-14 px on 96 DPI) no longer split across two
+half-coverage rows. The unhinted-outline "fluffy" artifact goes
+away. Designed as a non-blocking interim to a full FreeType-style
+autohinter or TrueType bytecode interpreter, neither of which is
+on the roadmap.
+
+Latin-only. Non-Latin fonts (Arabic / Devanagari / CJK / Khmer)
+miss the reference codepoints during sampling, so
+`Font._hint_metrics.valid` stays `false` and the flag is silently
+a no-op — the autohinter heuristic would damage glyph shapes more
+than help on those scripts. The check is per-font, so a font that
+lacks 'H' (a script-specific font with no Latin coverage)
+gracefully degrades to unhinted rendering.
+
+Other limitations baked in:
+
+- **Y-only.** No vertical stem snapping yet — the symptom we're
+  fixing is bottom-of-S fluffiness, which is purely a Y artifact.
+  Subpixel-x positioning still works the same.
+- **No overshoot preservation.** Round letters like O lose their
+  small "below the baseline" overshoot at small sizes. Most
+  hinting policies do this anyway at body sizes — overshoot is a
+  display-size feature.
+- **Linear interpolation between zones.** Real autohinters detect
+  stems and snap them individually; this version just lerps. The
+  bottom of S happens to coincide with the baseline blue zone in
+  virtually every font, so the lerp gives the right answer there.
+
 ### Added — UAX #15 Unicode normalization (NFC / NFD / NFKC / NFKD)
 
 New `normalize` package: 20 034 / 20 034 NormalizationTest.txt

@@ -30,7 +30,7 @@ import "../parse"
 // (0..3); the rasterizer shifts the outline by `subpx_x / 4` px in x
 // before scanline conversion, so the caller can cache four variants
 // per (font, glyph, size) instead of snapping to integer pixels.
-rasterize :: proc(o: ^parse.Outline, units_per_em: u16, size: f32, edges: ^[dynamic]Edge, subpx_x: u8 = 0, allocator := context.allocator) -> (b: Bitmap, x_offset, y_offset: int, err: Rast_Error) {
+rasterize :: proc(o: ^parse.Outline, units_per_em: u16, size: f32, edges: ^[dynamic]Edge, subpx_x: u8 = 0, allocator := context.allocator, hint: ^Hint_Snap = nil) -> (b: Bitmap, x_offset, y_offset: int, err: Rast_Error) {
 	if size <= 0 || units_per_em == 0 {
 		err = .Invalid_Size
 		return
@@ -43,11 +43,20 @@ rasterize :: proc(o: ^parse.Outline, units_per_em: u16, size: f32, edges: ^[dyna
 	// responsibility to keep the value in range.
 	dx := f32(subpx_x & 3) / 4.0
 
-	// Bbox in pixel space (y-flipped: lower y in font = upper y in image).
+	// Bbox in pixel space (y-flipped: lower y in font = upper y in
+	// image). When hinting is active the outline's Y values get
+	// remapped between snapped blue zones, so the bbox needs the same
+	// remap to keep the bitmap sized right.
+	y_top_pre    := -f32(o.y_max) * scale
+	y_bottom_pre := -f32(o.y_min) * scale
+	if hint != nil && hint.valid {
+		y_top_pre    = -apply_hint_y(f32(o.y_max) * scale, hint^)
+		y_bottom_pre = -apply_hint_y(f32(o.y_min) * scale, hint^)
+	}
 	x_min_px := math.floor(f32(o.x_min) * scale + dx)
 	x_max_px := math.ceil (f32(o.x_max) * scale + dx)
-	y_min_px := math.floor(-f32(o.y_max) * scale)
-	y_max_px := math.ceil (-f32(o.y_min) * scale)
+	y_min_px := math.floor(y_top_pre)
+	y_max_px := math.ceil (y_bottom_pre)
 
 	width  := int(x_max_px - x_min_px)
 	height := int(y_max_px - y_min_px)
@@ -66,7 +75,7 @@ rasterize :: proc(o: ^parse.Outline, units_per_em: u16, size: f32, edges: ^[dyna
 	// subpixel `dx`) here. The current call has scale_x = scale_y =
 	// scale and writes y as `baseline - y_font*scale` — pass
 	// baseline = -y_min_px to align the top with row 0.
-	flatten_outline(o, scale, scale, -y_min_px, edges)
+	flatten_outline(o, scale, scale, -y_min_px, edges, 0.25, hint)
 	x_shift := -x_min_px + dx
 	if x_shift != 0 {
 		for i in 0..<len(edges) {
