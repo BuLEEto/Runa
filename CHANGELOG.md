@@ -40,6 +40,34 @@ WordBreakTest conformance for double-click word selection and
 word-by-word cursor movement.
 API.md refreshed for v0.9.2 → v1.0.0 surface.
 
+### Fixed — Autohinter: relative snap for round zones
+
+Round-zone suppression was using *independent* `math.round` on
+each zone's pre-scale, which silently misbehaved when the flat
+and round pre-scales straddled a half-pixel boundary. Concrete
+case from Skald's body-text bench:
+
+  cap_height_pre        = 17.46    →  round  →  17
+  round_cap_height_pre  = 17.70    →  round  →  18
+
+Real overshoot was 0.24 px (well under half a pixel) but
+independent rounding emitted a 1-px gap, the lerp band preserved
+it, and round capitals (C, S, O) showed a stray "lump" pixel at
+the top at body sizes (12-14 px).
+
+Fix: round-zone snap is now *relative* to its flat anchor. The
+gap between flat_pre and round_pre is computed directly; if it's
+< 0.5 px, the round zone snaps to the same row as the flat anchor
+(suppress); if >= 0.5 px, it snaps to ±round(gap) rows (preserve
+overshoot). No more straddling-the-boundary surprises — the
+suppression threshold is the actual pre-scale overshoot, not an
+artifact of where the absolute pre-values fall on the pixel grid.
+
+Applies to all three round zones (round_bottom, round_x_height,
+round_cap_height). One new regression test pins the
+Skald-reported case (cap=1490, round_cap=1510, UPM 2048, size 24
+→ both snap to 17).
+
 ### Fixed — Autohinter: round-letter overshoot suppression (top too)
 
 The first round_bottom fix only handled the bottom of round

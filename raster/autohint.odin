@@ -75,23 +75,52 @@ hint_snap_for_size :: proc(m: Hint_Metrics, units_per_em: u16, size: f32) -> Hin
 	out.cap_height_pre       = m.cap_height       * s
 	out.round_cap_height_pre = m.round_cap_height * s
 	out.ascender_pre         = m.ascender         * s
-	out.descender_snap        = math.round(out.descender_pre)
-	out.round_bottom_snap     = math.round(out.round_bottom_pre)
-	out.baseline_snap         = math.round(out.baseline_pre)
-	out.x_height_snap         = math.round(out.x_height_pre)
-	out.round_x_height_snap   = math.round(out.round_x_height_pre)
-	out.cap_height_snap       = math.round(out.cap_height_pre)
-	out.round_cap_height_snap = math.round(out.round_cap_height_pre)
-	out.ascender_snap         = math.round(out.ascender_pre)
-	// The round_bottom snap is the overshoot suppression policy. At
-	// body sizes the natural round of a small negative pre-value
-	// (e.g. -0.18 px) gives 0 = baseline_snap, collapsing the fluffy
-	// sub-pixel row that's the visible "bottom-of-S lip" artifact.
-	// At display sizes (~85 px+ on most Latin fonts) the round
-	// produces a real 1-px overshoot, which is what the font designer
-	// intends to be visible at that scale.
+	// Flat zones get straightforward independent rounding — each is a
+	// "primary" anchor that other zones snap relative to.
+	out.descender_snap  = math.round(out.descender_pre)
+	out.baseline_snap   = math.round(out.baseline_pre)
+	out.x_height_snap   = math.round(out.x_height_pre)
+	out.cap_height_snap = math.round(out.cap_height_pre)
+	out.ascender_snap   = math.round(out.ascender_pre)
+	// Round zones get RELATIVE snap against their flat anchor. The
+	// reason: independent rounding of two close pre-values can put
+	// them on different sides of a half-pixel boundary even when the
+	// real overshoot is far less than half a pixel. Example with
+	// Inter cap_height=1490, round_cap=1510, UPM 2048, size 24:
+	//
+	//   cap_pre       = 17.46  →  round  →  17
+	//   round_cap_pre = 17.70  →  round  →  18
+	//
+	// Real overshoot: 0.24 px. Independent rounding: 1 px gap. The
+	// lerp band then maps the round top to a row 1 above cap, and the
+	// outline emits a stray "lump" pixel at the top of round letters
+	// at body sizes. Relative snap takes the gap directly and only
+	// preserves overshoot when it crosses half a pixel.
+	out.round_bottom_snap     = relative_snap_below(out.baseline_pre,   out.round_bottom_pre,     out.baseline_snap)
+	out.round_x_height_snap   = relative_snap_above(out.x_height_pre,   out.round_x_height_pre,   out.x_height_snap)
+	out.round_cap_height_snap = relative_snap_above(out.cap_height_pre, out.round_cap_height_pre, out.cap_height_snap)
 	out.valid = true
 	return out
+}
+
+// relative_snap_above snaps an overshoot zone that sits above a flat
+// anchor (e.g. round-top of 'o' above x_height). Suppresses when the
+// pre-scale overshoot is sub-half-pixel; preserves as +N rows above
+// the flat snap when it's larger.
+@(private)
+relative_snap_above :: proc(flat_pre, round_pre, flat_snap: f32) -> f32 {
+	overshoot := round_pre - flat_pre
+	if overshoot < 0.5 { return flat_snap }
+	return flat_snap + math.round(overshoot)
+}
+
+// relative_snap_below is the mirror for overshoot below a flat anchor
+// (e.g. round-bottom of 'o' below baseline).
+@(private)
+relative_snap_below :: proc(flat_pre, round_pre, flat_snap: f32) -> f32 {
+	overshoot := flat_pre - round_pre
+	if overshoot < 0.5 { return flat_snap }
+	return flat_snap - math.round(overshoot)
 }
 
 // apply_hint_y maps a pre-scaled outline Y to its hinted Y. Outside

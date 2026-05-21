@@ -268,6 +268,37 @@ test_hint_overshoot_preserved_at_display_size :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_hint_relative_snap_no_straddle_lump :: proc(t: ^testing.T) {
+	// Regression: at certain body sizes the cap_height pre-scale and
+	// round_cap_height pre-scale land on opposite sides of a
+	// half-pixel boundary even though the real overshoot is small —
+	// independent rounding would diverge by 1 px and emit a visible
+	// "lump" at the top of round capitals (C, S, O at size 14 in
+	// Skald's UI bench was the smoking gun).
+	//
+	// Constructed values that reproduce the straddle:
+	//   cap_pre = 17.46 (UPM 2048 cap_height=1490 at size 24)
+	//   round_cap_pre = 17.70 (overshoot 20 fu at same size)
+	// Real overshoot = 0.24 px, well under half a pixel.
+	// Independent round: cap=17, round_cap=18. Diverges by 1.
+	// Relative snap: gap < 0.5 → suppress → both 17. No lump.
+	m := raster.Hint_Metrics{
+		descender        = -480,
+		round_bottom     = -12,
+		baseline         = 0,
+		x_height         = 1050,
+		round_x_height   = 1062,
+		cap_height       = 1490,
+		round_cap_height = 1510,
+		ascender         = 1900,
+		valid            = true,
+	}
+	h := raster.hint_snap_for_size(m, 2048, 24.0)
+	testing.expect_value(t, h.cap_height_snap, f32(17))
+	testing.expect_value(t, h.round_cap_height_snap, f32(17))    // would be 18 with independent round
+}
+
+@(test)
 test_hint_overshoot_top_suppression_at_body_size :: proc(t: ^testing.T) {
 	// Mirror of the bottom test for the top of round letters. At body
 	// sizes round_x_height_pre rounds to the same integer as
