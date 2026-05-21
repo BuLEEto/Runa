@@ -29,6 +29,108 @@ new optional features) live under `### Added` / `### Changed`.
   text from the network, clipboard, or partially-decoded buffers;
   triggered in practice by an incoming Nostr chat message.
 
+## 1.1.0 — 2026-05-21
+
+Headline: **autohinter on by default.** v1.0 shipped with a known
+fluffiness artifact at body text sizes — round letters (S, O, c,
+e, o) had a stray partial-coverage row at the top and bottom of
+their bowls because the outline's natural sub-pixel overshoot got
+rasterised as a fractional row of antialiased coverage. v1.1
+defaults to running the Latin autohinter we built between 1.0 and
+1.1, which snaps blue zones and suppresses sub-pixel overshoot.
+Text at 10-30 px on 96 DPI looks visibly cleaner; display sizes
+(above ~50 px) are unaffected because overshoot is preserved
+there by design.
+
+### Breaking changes (visual)
+
+`raster_glyph`'s `hint` parameter defaults to `true` (was `false`
+in v1.0.x). Anyone who visually calibrated against the v1.0
+unhinted output — golden image comparisons, hand-tuned letter
+spacing, screenshot diffs — will see those break.
+
+Two recovery options:
+
+- **Accept the new default.** Most callers will look visibly
+  cleaner with no other change.
+- **Pass `hint: false` explicitly.** Forces the v1.0 behavior on
+  a per-call basis. The flag still exists; we just flipped the
+  default.
+
+Non-Latin fonts (Arabic, Devanagari, CJK, Khmer, etc.) are
+unaffected — the autohinter detects missing reference glyphs at
+font load and silently no-ops on those fonts.
+
+### How the autohinter works
+
+`raster/autohint.odin` (~200 LOC). At font load we sample seven
+reference glyphs to extract blue zones:
+
+  H.y_max  → cap_height
+  x.y_max  → x_height
+  l.y_max  → ascender
+  p.y_min  → descender
+  o.y_min  → round_bottom (overshoot below baseline)
+  o.y_max  → round_x_height (overshoot above x-height)
+  O.y_max  → round_cap_height (overshoot above cap-height)
+
+At raster time each blue zone is scaled and snapped to an integer
+pixel row. Outline Y coordinates get remapped linearly between
+snapped zones. Round-zone snaps are computed *relative to* their
+flat anchor: if the pre-scale overshoot is < 0.5 px, the round
+zone snaps to the same row as the flat zone (suppress); if it's
+larger, it snaps to ±round(gap) rows (preserve). The relative
+threshold avoids the half-pixel-straddle bug where independent
+rounding could emit a 1-px gap from a 0.2-px overshoot.
+
+Latin-only. The heuristic is built for the Latin stem structure
+and would damage glyph shapes on Arabic / Devanagari / CJK.
+Variable fonts work fine — hint metrics use the default-instance
+glyph extents.
+
+What this version doesn't do (and may add in 1.2 if the artifacts
+surface in real use):
+
+- **Vertical stem-width snapping.** Y is hinted; X stems still
+  rely on the 4-bucket subpixel-X positioning. No visible artifact
+  reported yet, but the foundation is asymmetric.
+- **Per-glyph stem detection.** Crossbar of `e`, dot of `i`,
+  middle stroke of `a`, etc. are positioned by linear
+  interpolation between blue zones, not by individual stem
+  analysis. Real FreeType-style autohinters do this.
+
+### Added — Autohinter blue-zone snap + overshoot suppression
+
+`raster_glyph(..., hint: true)` is the default. The full
+autohinter story across multiple iterations:
+
+- **Blue-zone snap** — baseline / x-height / cap-height / ascender
+  / descender snap to integer pixel rows with linear interpolation
+  between them.
+- **Round-bottom suppression** — sample `o.y_min` (or `O` as
+  fallback) for the overshoot below baseline.
+- **Round-top suppression (lowercase)** — sample `o.y_max` for the
+  overshoot above x-height.
+- **Round-top suppression (uppercase)** — sample `O.y_max` for the
+  overshoot above cap-height.
+- **Relative-snap** — round-zone snap is computed against the flat
+  anchor's gap, not via independent rounding. Avoids the
+  half-pixel straddle bug where flat=17, round=18 from
+  independent rounding even when the actual overshoot is 0.2 px.
+
+Five raster tests pin the behavior: identity (no-op when
+metrics.valid=false), baseline snap (fractional baseline lands
+on integer row), top suppression at body size, bottom
+suppression at body size, top-and-bottom shrinkage end-to-end on
+Roboto O, and the half-pixel straddle regression.
+
+### Other v1.x progress that landed between 1.0 and 1.1
+
+This minor release also includes the work shipped on the 1.0.x
+patch series: UAX #29 word + sentence iterators, UAX #15
+normalization, line-break conformance polish. See the 1.0.x
+section below.
+
 ## 1.0.0 — 2026-05-16
 
 Closes the v1.0 punch list. UAX #9 bidi hits 100.00 % (was

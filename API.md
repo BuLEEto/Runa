@@ -125,18 +125,25 @@ requested form; the caller owns the result.
 ```odin
 raster_glyph :: proc(font: ^Font, gid: Glyph_ID, size: f32, subpx_x: u8,
                      atlas: ^Atlas, allocator := context.allocator,
-                     hint: bool = false) -> (Atlas_Slot, Error)
+                     hint: bool = true) -> (Atlas_Slot, Error)
 ```
 
-Set `hint: true` to enable the minimal Latin autohinter — pulls
-outline Y coords onto integer pixel rows for the baseline,
-x-height, cap-height, ascender, and descender blue zones, with
-linear interpolation between them. Fixes the unhinted "fluffy
-bottom-of-S" artifact at body sizes (10-14 px on 96 DPI) without
-needing a TrueType bytecode interpreter. Latin-only — non-Latin
-fonts have `_hint_metrics.valid = false`, so `hint: true` is a
-no-op on Arabic / Devanagari / CJK fonts (they would distort more
-than help under this heuristic).
+`hint: true` (the default) enables the minimal Latin autohinter —
+pulls outline Y coordinates onto integer pixel rows for the
+baseline, x-height, cap-height, ascender, and descender blue
+zones, with relative-snap suppression of round-letter overshoot.
+Fixes the unhinted "fluffy bottom-of-S lip" and "lump on round
+caps at body sizes" artifacts without a TrueType bytecode
+interpreter.
+
+Latin-only — non-Latin fonts have `_hint_metrics.valid = false`,
+so the hinter is silently a no-op on Arabic / Devanagari / CJK
+fonts (it would distort more than help under this heuristic).
+
+Pass `hint: false` to force unhinted outline rendering — e.g.
+for "honest pixel" display work, design-comparison screenshots,
+or callers that have visually calibrated against pre-v1.1
+unhinted output.
 
 Renders one glyph into the shared atlas at the requested subpixel
 offset. COLRv0 / COLRv1 emoji are auto-detected and rasterized
