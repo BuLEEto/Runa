@@ -179,13 +179,15 @@ test_hint_snap_baseline :: proc(t: ^testing.T) {
 	// the baseline to row 14, and an outline point exactly at the
 	// baseline should land on integer 14 as well.
 	m: raster.Hint_Metrics
-	m.descender    = -300
-	m.round_bottom = -12
-	m.baseline     = 0
-	m.x_height     = 500
-	m.cap_height   = 700
-	m.ascender     = 800
-	m.valid        = true
+	m.descender        = -300
+	m.round_bottom     = -12
+	m.baseline         = 0
+	m.x_height         = 500
+	m.round_x_height   = 512
+	m.cap_height       = 700
+	m.round_cap_height = 712
+	m.ascender         = 800
+	m.valid            = true
 
 	// Pick units_per_em / size so baseline*scale = 0 and cap_height*scale = 14.4.
 	// scale = 14.4 / 700 ⇒ size/upm = scale ⇒ size = 14.4, upm = 700.
@@ -216,13 +218,15 @@ test_hint_overshoot_suppression_at_body_size :: proc(t: ^testing.T) {
 	// to 0 and the overshoot collapses to the baseline. Verify by
 	// running apply_hint_y on the overshoot pre-scale.
 	m := raster.Hint_Metrics{
-		descender    = -480,
-		round_bottom = -12,
-		baseline     = 0,
-		x_height     = 1050,
-		cap_height   = 1450,
-		ascender     = 1900,
-		valid        = true,
+		descender        = -480,
+		round_bottom     = -12,
+		baseline         = 0,
+		x_height         = 1050,
+		round_x_height   = 1062,
+		cap_height       = 1450,
+		round_cap_height = 1462,
+		ascender         = 1900,
+		valid            = true,
 	}
 	// Inter-ish — UPM 2048, size 13 (body).
 	h := raster.hint_snap_for_size(m, 2048, 13.0)
@@ -246,19 +250,54 @@ test_hint_overshoot_preserved_at_display_size :: proc(t: ^testing.T) {
 	// produces a real 1-px overshoot. Verify the round_bottom_snap
 	// separates from baseline_snap above this threshold.
 	m := raster.Hint_Metrics{
-		descender    = -480,
-		round_bottom = -12,
-		baseline     = 0,
-		x_height     = 1050,
-		cap_height   = 1450,
-		ascender     = 1900,
-		valid        = true,
+		descender        = -480,
+		round_bottom     = -12,
+		baseline         = 0,
+		x_height         = 1050,
+		round_x_height   = 1062,
+		cap_height       = 1450,
+		round_cap_height = 1462,
+		ascender         = 1900,
+		valid            = true,
 	}
 	// UPM 2048, size 150 (display). round_bottom_pre = -12 * (150/2048) = -0.879. round = -1.
 	h := raster.hint_snap_for_size(m, 2048, 150.0)
 	testing.expect(t, h.valid, "snap valid")
 	testing.expect_value(t, h.baseline_snap, f32(0))
 	testing.expect_value(t, h.round_bottom_snap, f32(-1))    // overshoot preserved as 1 pixel
+}
+
+@(test)
+test_hint_overshoot_top_suppression_at_body_size :: proc(t: ^testing.T) {
+	// Mirror of the bottom test for the top of round letters. At body
+	// sizes round_x_height_pre rounds to the same integer as
+	// x_height_pre, so the lerp band collapses and the top overshoot
+	// of o / c / e / s is suppressed.
+	m := raster.Hint_Metrics{
+		descender        = -480,
+		round_bottom     = -12,
+		baseline         = 0,
+		x_height         = 1050,
+		round_x_height   = 1062,
+		cap_height       = 1450,
+		round_cap_height = 1462,
+		ascender         = 1900,
+		valid            = true,
+	}
+	// Inter UPM 2048 at size 13. x_height_pre = 1050 * 13/2048 = 6.665.
+	// round_x_height_pre = 1062 * 13/2048 = 6.741. round both to 7.
+	h := raster.hint_snap_for_size(m, 2048, 13.0)
+	testing.expect_value(t, h.x_height_snap, f32(7))
+	testing.expect_value(t, h.round_x_height_snap, f32(7))
+	// A point at the overshoot top must end exactly on the snapped
+	// x-height — same as a point on the flat x-height.
+	got_round_top := raster.apply_hint_y(h.round_x_height_pre, h)
+	testing.expect_value(t, got_round_top, h.x_height_snap)
+	// Symmetric check for cap-height round. cap_height_pre = 1450 *
+	// 13/2048 = 9.204, round_cap_height_pre = 1462 * 13/2048 = 9.281.
+	// Both round to 9 at body size.
+	testing.expect_value(t, h.cap_height_snap, f32(9))
+	testing.expect_value(t, h.round_cap_height_snap, f32(9))
 }
 
 @(test)
@@ -299,20 +338,36 @@ test_hint_shrinks_bitmap_height_for_round_letter :: proc(t: ^testing.T) {
 		if len(o.contour_ends) == 0 { return 0, false }
 		return f32(o.y_max) if want_max else f32(o.y_min), true
 	}
+	sample_full :: proc(g: ^parse.Glyf, loca: ^parse.Loca, cm: ^parse.Cmap, r: rune) -> (y_min, y_max: f32, ok: bool) {
+		gid := parse.cmap_lookup(cm, r)
+		if gid == 0 { return }
+		o: parse.Outline
+		defer parse.outline_destroy(&o)
+		if parse.glyf_outline(g, loca, gid, &o) != .None { return }
+		if len(o.contour_ends) == 0 { return }
+		return f32(o.y_min), f32(o.y_max), true
+	}
 	cap_h, _ := sample(&g, &loca, &cm, 'H', true)
 	x_h,   _ := sample(&g, &loca, &cm, 'x', true)
 	asc,   _ := sample(&g, &loca, &cm, 'l', true)
 	dsc,   _ := sample(&g, &loca, &cm, 'p', false)
 	rb,    _ := sample(&g, &loca, &cm, 'o', false)
 
+	// Also sample 'o.y_max' and 'O.y_max' for the round-top overshoot zones.
+	_, rb_top, rb_top_ok := sample_full(&g, &loca, &cm, 'o')
+	_, rc_top, rc_top_ok := sample_full(&g, &loca, &cm, 'O')
+	testing.expect(t, rb_top_ok && rc_top_ok, "round-top references resolve")
+
 	m := raster.Hint_Metrics{
-		descender    = dsc,
-		round_bottom = rb,
-		baseline     = 0,
-		x_height     = x_h,
-		cap_height   = cap_h,
-		ascender     = asc,
-		valid        = true,
+		descender        = dsc,
+		round_bottom     = rb,
+		baseline         = 0,
+		x_height         = x_h,
+		round_x_height   = rb_top,
+		cap_height       = cap_h,
+		round_cap_height = rc_top,
+		ascender         = asc,
+		valid            = true,
 	}
 	h := raster.hint_snap_for_size(m, head.units_per_em, 14.0)
 

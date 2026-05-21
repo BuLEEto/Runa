@@ -40,6 +40,24 @@ WordBreakTest conformance for double-click word selection and
 word-by-word cursor movement.
 API.md refreshed for v0.9.2 → v1.0.0 surface.
 
+### Fixed — Autohinter: round-letter overshoot suppression (top too)
+
+The first round_bottom fix only handled the bottom of round
+letters. The top side has the same overshoot — `o`, `c`, `e`, `s`
+extend slightly above x-height; `O`, `C`, `S` extend slightly
+above cap-height — and Skald hit a mirrored fluff artifact at the
+top of these letters once the bottom was fixed.
+
+Added `round_x_height` (sampled from 'o.y_max') and
+`round_cap_height` ('O.y_max') blue zones. apply_hint_y now has
+bands x_height..round_x_height and cap_height..round_cap_height.
+At body sizes both endpoints of each band snap to the same
+integer row → the lerp collapses → overshoot suppressed. Same
+display-size recovery as the bottom side.
+
+End-to-end: Roboto 'O' at 14 px goes from 9×12 unhinted to 9×10
+hinted — both fluff rows (top and bottom) gone.
+
 ### Fixed — Autohinter: round-letter overshoot suppression
 
 The minimal Latin autohinter shipped without sampling the

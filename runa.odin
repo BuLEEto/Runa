@@ -897,23 +897,28 @@ sample_hint_metrics :: proc(f: ^Font) -> raster.Hint_Metrics {
 	x_h,   x_ok   := sample_glyph_y_max(f, 'x')
 	asc,   a_ok   := sample_glyph_y_max(f, 'l')
 	dsc,   d_ok   := sample_glyph_y_min(f, 'p')
-	// round_bottom: overshoot of round letters, sampled from 'o' (or
-	// 'O' as fallback). For most Latin fonts this is a small negative
-	// value (e.g. -12 font units for Inter); at body sizes it scales
-	// to a sub-pixel quantity that the integer-round snap collapses
-	// to the baseline. That's the fix for the "fluffy bottom-of-S lip"
-	// artifact — unhinted overshoot creates a partial-coverage extra
-	// row at the bottom of round letters.
-	rb,    rb_ok  := sample_glyph_y_min(f, 'o')
-	if !rb_ok { rb, rb_ok = sample_glyph_y_min(f, 'O') }
-	if !(cap_ok && x_ok && a_ok && d_ok && rb_ok) { return out }
-	out.descender    = dsc
-	out.round_bottom = rb
-	out.baseline     = 0
-	out.x_height     = x_h
-	out.cap_height   = cap_h
-	out.ascender     = asc
-	out.valid        = true
+	// Round-letter overshoots — sampled from 'o' / 'O' as round-bowl
+	// references. Below baseline AND above the flat top, round letters
+	// extend a sub-pixel distance so the eye reads them at the same
+	// vertical extent as flat-top letters. Unhinted, each overshoot
+	// rasters as a fluffy partial-coverage row; snapping each to its
+	// natural integer pixel row collapses both fluffs at body sizes.
+	rb_bot, rb_bot_ok := sample_glyph_y_min(f, 'o')
+	if !rb_bot_ok { rb_bot, rb_bot_ok = sample_glyph_y_min(f, 'O') }
+	rb_top, rb_top_ok := sample_glyph_y_max(f, 'o')
+	if !rb_top_ok { rb_top, rb_top_ok = sample_glyph_y_max(f, 'O') }
+	rc_top, rc_top_ok := sample_glyph_y_max(f, 'O')
+	if !rc_top_ok { rc_top, rc_top_ok = sample_glyph_y_max(f, 'o') }
+	if !(cap_ok && x_ok && a_ok && d_ok && rb_bot_ok && rb_top_ok && rc_top_ok) { return out }
+	out.descender        = dsc
+	out.round_bottom     = rb_bot
+	out.baseline         = 0
+	out.x_height         = x_h
+	out.round_x_height   = rb_top
+	out.cap_height       = cap_h
+	out.round_cap_height = rc_top
+	out.ascender         = asc
+	out.valid            = true
 	return out
 }
 
