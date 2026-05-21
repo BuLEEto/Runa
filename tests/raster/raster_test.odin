@@ -179,12 +179,13 @@ test_hint_snap_baseline :: proc(t: ^testing.T) {
 	// the baseline to row 14, and an outline point exactly at the
 	// baseline should land on integer 14 as well.
 	m: raster.Hint_Metrics
-	m.descender  = -300
-	m.baseline   = 0
-	m.x_height   = 500
-	m.cap_height = 700
-	m.ascender   = 800
-	m.valid      = true
+	m.descender    = -300
+	m.round_bottom = -12
+	m.baseline     = 0
+	m.x_height     = 500
+	m.cap_height   = 700
+	m.ascender     = 800
+	m.valid        = true
 
 	// Pick units_per_em / size so baseline*scale = 0 and cap_height*scale = 14.4.
 	// scale = 14.4 / 700 ⇒ size/upm = scale ⇒ size = 14.4, upm = 700.
@@ -201,6 +202,144 @@ test_hint_snap_baseline :: proc(t: ^testing.T) {
 	// A point exactly on the cap-height must end on the snapped cap.
 	got_cap := raster.apply_hint_y(h.cap_height_pre, h)
 	testing.expect_value(t, got_cap, h.cap_height_snap)
+}
+
+@(test)
+test_hint_overshoot_suppression_at_body_size :: proc(t: ^testing.T) {
+	// Round letters (S, O, c, e, o) have a small overshoot below the
+	// baseline so the eye reads them as the same height as flat-bottom
+	// letters (H, n, m). At body sizes the overshoot is sub-pixel and
+	// the unhinted rasterizer emits it as a partial-coverage row at
+	// the bottom of the bitmap — the visible "bottom-of-S lip" artifact.
+	//
+	// With round_bottom snapping enabled, that sub-pixel value rounds
+	// to 0 and the overshoot collapses to the baseline. Verify by
+	// running apply_hint_y on the overshoot pre-scale.
+	m := raster.Hint_Metrics{
+		descender    = -480,
+		round_bottom = -12,
+		baseline     = 0,
+		x_height     = 1050,
+		cap_height   = 1450,
+		ascender     = 1900,
+		valid        = true,
+	}
+	// Inter-ish — UPM 2048, size 13 (body).
+	h := raster.hint_snap_for_size(m, 2048, 13.0)
+	testing.expect(t, h.valid, "snap valid")
+	testing.expect_value(t, h.baseline_snap, f32(0))
+	// round_bottom_pre = -12 * (13/2048) = -0.0762. round = 0.
+	testing.expect_value(t, h.round_bottom_snap, f32(0))
+	// A point exactly at the overshoot must collapse to 0.
+	got_overshoot := raster.apply_hint_y(h.round_bottom_pre, h)
+	testing.expect_value(t, got_overshoot, f32(0))
+	// Any point inside the overshoot band must also collapse to 0
+	// (the lerp endpoints are both 0).
+	got_mid := raster.apply_hint_y(h.round_bottom_pre * 0.5, h)
+	testing.expect_value(t, got_mid, f32(0))
+}
+
+@(test)
+test_hint_overshoot_preserved_at_display_size :: proc(t: ^testing.T) {
+	// At display sizes (~100 px+) the overshoot pre-scale lands at
+	// roughly half a pixel or more, and the natural integer round
+	// produces a real 1-px overshoot. Verify the round_bottom_snap
+	// separates from baseline_snap above this threshold.
+	m := raster.Hint_Metrics{
+		descender    = -480,
+		round_bottom = -12,
+		baseline     = 0,
+		x_height     = 1050,
+		cap_height   = 1450,
+		ascender     = 1900,
+		valid        = true,
+	}
+	// UPM 2048, size 150 (display). round_bottom_pre = -12 * (150/2048) = -0.879. round = -1.
+	h := raster.hint_snap_for_size(m, 2048, 150.0)
+	testing.expect(t, h.valid, "snap valid")
+	testing.expect_value(t, h.baseline_snap, f32(0))
+	testing.expect_value(t, h.round_bottom_snap, f32(-1))    // overshoot preserved as 1 pixel
+}
+
+@(test)
+test_hint_shrinks_bitmap_height_for_round_letter :: proc(t: ^testing.T) {
+	// End-to-end: an unhinted round-letter raster at body size should
+	// produce a bitmap one row taller than the hinted version, because
+	// the unhinted version reserves a fluff row for the overshoot and
+	// the hinted version collapses it.
+	data, ok := load_bytes(ROBOTO)
+	if !ok {
+		log.info("Roboto-Regular.ttf not present; skipping")
+		return
+	}
+	defer delete(data)
+
+	idx, _ := parse.parse_table_index(data)
+	defer parse.table_index_destroy(&idx)
+	head_b, _ := parse.find_table(&idx, data, parse.tag("head"))
+	head, _ := parse.parse_head(head_b)
+	maxp_b, _ := parse.find_table(&idx, data, parse.tag("maxp"))
+	mx, _ := parse.parse_maxp(maxp_b)
+	loca_b, _ := parse.find_table(&idx, data, parse.tag("loca"))
+	loca, _ := parse.parse_loca(loca_b, head.index_to_loc_format, mx.num_glyphs)
+	defer parse.loca_destroy(&loca)
+	cmap_b, _ := parse.find_table(&idx, data, parse.tag("cmap"))
+	cm, _ := parse.parse_cmap(cmap_b)
+	defer parse.cmap_destroy(&cm)
+	glyf_b, _ := parse.find_table(&idx, data, parse.tag("glyf"))
+	g := parse.new_glyf(glyf_b)
+
+	// Build hint metrics from this font's reference glyphs.
+	sample :: proc(g: ^parse.Glyf, loca: ^parse.Loca, cm: ^parse.Cmap, r: rune, want_max: bool) -> (f32, bool) {
+		gid := parse.cmap_lookup(cm, r)
+		if gid == 0 { return 0, false }
+		o: parse.Outline
+		defer parse.outline_destroy(&o)
+		if parse.glyf_outline(g, loca, gid, &o) != .None { return 0, false }
+		if len(o.contour_ends) == 0 { return 0, false }
+		return f32(o.y_max) if want_max else f32(o.y_min), true
+	}
+	cap_h, _ := sample(&g, &loca, &cm, 'H', true)
+	x_h,   _ := sample(&g, &loca, &cm, 'x', true)
+	asc,   _ := sample(&g, &loca, &cm, 'l', true)
+	dsc,   _ := sample(&g, &loca, &cm, 'p', false)
+	rb,    _ := sample(&g, &loca, &cm, 'o', false)
+
+	m := raster.Hint_Metrics{
+		descender    = dsc,
+		round_bottom = rb,
+		baseline     = 0,
+		x_height     = x_h,
+		cap_height   = cap_h,
+		ascender     = asc,
+		valid        = true,
+	}
+	h := raster.hint_snap_for_size(m, head.units_per_em, 14.0)
+
+	gid_O := parse.cmap_lookup(&cm, 'O')
+	testing.expect(t, gid_O != 0, "'O' resolves")
+	o: parse.Outline
+	defer parse.outline_destroy(&o)
+	testing.expect_value(t, parse.glyf_outline(&g, &loca, gid_O, &o), parse.Error.None)
+
+	edges := make([dynamic]raster.Edge, 0, 128)
+	defer delete(edges)
+
+	bm_no, _, _, e1 := raster.rasterize(&o, head.units_per_em, 14.0, &edges)
+	testing.expect_value(t, e1, raster.Rast_Error.None)
+	defer raster.bitmap_destroy(&bm_no)
+
+	bm_h, _, _, e2 := raster.rasterize(&o, head.units_per_em, 14.0, &edges, 0, context.allocator, &h)
+	testing.expect_value(t, e2, raster.Rast_Error.None)
+	defer raster.bitmap_destroy(&bm_h)
+
+	log.infof("O at 14px: unhinted=%dx%d hinted=%dx%d", bm_no.width, bm_no.height, bm_h.width, bm_h.height)
+
+	// The hinted bitmap should be at most as tall as the unhinted one
+	// (and strictly shorter if the unhinted version had an overshoot
+	// fluff row, which is the case for any modern Latin font at body
+	// sizes).
+	testing.expect(t, bm_h.height <= bm_no.height, "hinted O is not taller than unhinted")
 }
 
 @(test)

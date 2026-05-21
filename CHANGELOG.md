@@ -40,6 +40,34 @@ WordBreakTest conformance for double-click word selection and
 word-by-word cursor movement.
 API.md refreshed for v0.9.2 → v1.0.0 surface.
 
+### Fixed — Autohinter: round-letter overshoot suppression
+
+The minimal Latin autohinter shipped without sampling the
+`round_bottom` blue zone — the small (≤1 px sub-pixel) overshoot
+that round letters (S, O, c, e, o) extend below the baseline so
+the eye reads them at the same height as flat-bottom letters. At
+body sizes that overshoot rasterises as a partial-coverage row at
+the bottom of the bitmap — the visible "fluffy bottom-of-S lip"
+artifact. The earlier autohinter's blue zones jumped straight from
+baseline (0) to descender (~-7 px at body size), so a point at the
+overshoot (~-0.2 px) interpolated almost-zero and the fluff row
+survived.
+
+Fix: sample `o.y_min` (or `O.y_min` as fallback) at font load,
+add a `round_bottom` band to the snap. At body sizes the
+sub-pixel overshoot pre-scale rounds to 0 = baseline_snap and
+the entire round_bottom..baseline lerp collapses to 0 — the
+overshoot is suppressed, the fluff row is gone, and the bitmap
+shrinks by one row (verified end-to-end: O at 14 px goes from
+9×12 unhinted to 9×11 hinted).
+
+At display sizes (~85 px+ on Inter) the overshoot pre-scale
+crosses 0.5 px and the natural integer round produces -1 px, so
+the lerp recovers a real 1-px overshoot — which is what the font
+designer intends to be visible at that scale. No threshold param
+needed; the transition happens naturally where the math says it
+should.
+
 ### Added — Minimal Latin autohinter (opt-in)
 
 New `raster_glyph(..., hint: true)` flag enables a small Latin

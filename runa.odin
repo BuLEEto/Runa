@@ -897,13 +897,23 @@ sample_hint_metrics :: proc(f: ^Font) -> raster.Hint_Metrics {
 	x_h,   x_ok   := sample_glyph_y_max(f, 'x')
 	asc,   a_ok   := sample_glyph_y_max(f, 'l')
 	dsc,   d_ok   := sample_glyph_y_min(f, 'p')
-	if !(cap_ok && x_ok && a_ok && d_ok) { return out }
-	out.descender  = dsc
-	out.baseline   = 0
-	out.x_height   = x_h
-	out.cap_height = cap_h
-	out.ascender   = asc
-	out.valid      = true
+	// round_bottom: overshoot of round letters, sampled from 'o' (or
+	// 'O' as fallback). For most Latin fonts this is a small negative
+	// value (e.g. -12 font units for Inter); at body sizes it scales
+	// to a sub-pixel quantity that the integer-round snap collapses
+	// to the baseline. That's the fix for the "fluffy bottom-of-S lip"
+	// artifact — unhinted overshoot creates a partial-coverage extra
+	// row at the bottom of round letters.
+	rb,    rb_ok  := sample_glyph_y_min(f, 'o')
+	if !rb_ok { rb, rb_ok = sample_glyph_y_min(f, 'O') }
+	if !(cap_ok && x_ok && a_ok && d_ok && rb_ok) { return out }
+	out.descender    = dsc
+	out.round_bottom = rb
+	out.baseline     = 0
+	out.x_height     = x_h
+	out.cap_height   = cap_h
+	out.ascender     = asc
+	out.valid        = true
 	return out
 }
 
