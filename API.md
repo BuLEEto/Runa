@@ -86,6 +86,34 @@ line_destroy     :: proc(l: ^Line, allocator := context.allocator)
 across calls; zero-allocation cache hits are verified by the
 test suite.
 
+### Cache
+
+```odin
+cache_make         :: proc(allocator := context.allocator,
+                           max_entries: int = 4096) -> Cache
+cache_destroy      :: proc(c: ^Cache)
+cache_size         :: proc(c: ^Cache) -> int
+cache_capacity     :: proc(c: ^Cache) -> int
+cache_set_capacity :: proc(c: ^Cache, max_entries: int)
+```
+
+The shape cache holds memoised `[]Shaped_Glyph` keyed by
+`(font, size, axis_state, text)`. Cache hits return the same slice
+across calls with zero heap allocations.
+
+Eviction is **classic O(1) LRU** with a soft cap of `max_entries`
+(default 4096, roughly 4-8 MB at body sizes). When inserting past
+the cap, the least-recently-used entry is evicted and its glyph
+storage + interned text key are freed. Pass `max_entries = 0` to
+disable eviction entirely — suitable for short-lived caches or
+workloads with a known finite key set, but unbounded growth on
+high-churn unique text.
+
+`cache_size` / `cache_capacity` / `cache_set_capacity` exist for
+apps that want to monitor or tune the cache at runtime (e.g. an
+editor that grows the cap as the document gets bigger, or a
+debug overlay that displays cache pressure).
+
 ### Segmentation iterators (UAX #29)
 
 ```odin

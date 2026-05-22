@@ -9,6 +9,58 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.2.0 — 2026-05-22
+
+Headline: **`runa.Cache` is now bounded.** v1.x shipped an unbounded
+shape cache — the `(font, size, axis_state, text)` → glyphs map
+grew without limit. Static-text UIs (cookbooks, chat windows with
+a finite peer list) never noticed. High-churn UIs hit a real heap
+leak: Skald measured ~100 MB / minute / 100 unique-strings-per-tick
+in a stress test, which matches the math for typical body text
+(~900 bytes per cache entry × cache misses without eviction).
+
+The cache now evicts the least-recently-used entry once it holds
+`max_entries` distinct keys. Default cap is `4096` entries (roughly
+4-8 MB on body text). High-churn workloads — code editors, log
+viewers, animated tickers, file managers — now have bounded memory
+without changing call sites.
+
+### Added
+
+- `cache_size(c)`, `cache_capacity(c)`, `cache_set_capacity(c, n)`
+  for monitoring + runtime tuning. Useful for editor apps that
+  want to grow the cap as the document gets bigger, or debug
+  overlays that surface cache pressure.
+- `cache_make` now accepts `max_entries: int = 4096`. Pass `0` to
+  disable eviction entirely — restores the v1.0 unbounded
+  behaviour, suitable for short-lived caches or workloads with a
+  known finite key set.
+
+### Changed
+
+- `runa.Cache` internals: replaced the `map[Shape_Key]Cache_Entry`
+  with a slot-pool + intrusive doubly-linked list + key→index map.
+  O(1) per hit (with LRU move-to-head), O(1) per miss-with-evict.
+  The `Cache` struct is documented as opaque so the field rename
+  doesn't break source compatibility.
+- `cache_make()` (no args) now caps the cache at 4096 entries by
+  default. Callers who were relying on unbounded growth — there's
+  not many obvious reasons to want this, but the back-compat hatch
+  is `cache_make(context.allocator, 0)`.
+
+### Implementation notes
+
+- LRU bookkeeping is index-based, not pointer-based — entries live
+  in `[dynamic]Cache_Entry` and link via `u32` indices, so map
+  rehashes / array growths don't invalidate links.
+- Eviction order is per the dedicated stress test in
+  `tests/runa/font_test.odin`: a sticky key touched after each
+  batch of new inserts survives 20 unique-string evictions with
+  the same slice identity, confirming the LRU policy.
+- Tracking-allocator coverage: 500-insert stress over a 16-slot
+  cap allocates and frees every byte (484 evictions + 16 destroys),
+  no leaks under `mem.Tracking_Allocator`.
+
 ## 1.0.1 — 2026-05-17
 
 ### Fixed

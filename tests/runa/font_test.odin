@@ -191,14 +191,14 @@ test_layout_paragraph_cache_hit_skips_shaping :: proc(t: ^testing.T) {
 	// Snapshot cache size from the first call. Layout splits text
 	// into one run (single font) so the cache holds exactly one
 	// entry per (font, text, size) tuple.
-	entries_after_first := len(c.entries)
+	entries_after_first := runa.cache_size(&c)
 	testing.expect(t, entries_after_first > 0, "cache populated by first layout call")
 
 	// Second call — must hit cache, not add new entries.
 	second, _ := runa.layout_paragraph("Hello, world!", opts, &c)
 	defer { for &l in second { runa.line_destroy(&l) }; delete(second) }
 
-	testing.expect_value(t, len(c.entries), entries_after_first)
+	testing.expect_value(t, runa.cache_size(&c), entries_after_first)
 }
 
 @(test)
@@ -480,4 +480,149 @@ test_font_load_firacode :: proc(t: ^testing.T) {
 	fi_advance := runa.font_glyph_advance(&font, runa.font_lookup_glyph(&font, 'i'))
 	fa_advance := runa.font_glyph_advance(&font, runa.font_lookup_glyph(&font, 'm'))
 	testing.expect_value(t, fi_advance, fa_advance)
+}
+
+// ---- Cache LRU eviction ----------------------------------------------
+//
+// runa.Cache used to be unbounded. Apps with high-churn unique text
+// (code editors, log viewers, animated tickers) saw heap growth
+// without bound. v1.x adds bounded LRU; these tests pin the policy.
+
+@(test)
+test_cache_lru_evicts_at_capacity :: proc(t: ^testing.T) {
+	bytes, ok := load_font_bytes(ROBOTO)
+	if !ok { return }
+	defer delete(bytes)
+
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	// Small cap so the test runs quickly.
+	c := runa.cache_make(context.allocator, 8)
+	defer runa.cache_destroy(&c)
+
+	testing.expect_value(t, runa.cache_capacity(&c), 8)
+	testing.expect_value(t, runa.cache_size(&c), 0)
+
+	// Insert way past the cap with all-unique strings. Size must stay
+	// pinned at the cap.
+	for i in 0..<100 {
+		txt := []u8{'a' + u8(i % 26), 'a' + u8((i / 26) % 26), 'a' + u8((i / 676) % 26)}
+		_ = runa.shape_text_cached(&font, string(txt), 14, &c)
+	}
+	testing.expect_value(t, runa.cache_size(&c), 8)
+}
+
+@(test)
+test_cache_lru_keeps_recently_used :: proc(t: ^testing.T) {
+	// Pin the LRU policy: a key touched after every batch of new
+	// inserts must survive eviction.
+	bytes, ok := load_font_bytes(ROBOTO)
+	if !ok { return }
+	defer delete(bytes)
+
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	c := runa.cache_make(context.allocator, 4)
+	defer runa.cache_destroy(&c)
+
+	// Insert the "sticky" key first. Capture its slice for identity.
+	sticky_first := runa.shape_text_cached(&font, "stick", 14, &c)
+	sticky_ptr := raw_data(sticky_first)
+
+	// Insert 20 unique strings, touching the sticky key every 3 calls
+	// so it never falls to the LRU tail.
+	for i in 0..<20 {
+		txt := []u8{'q', 'a' + u8(i % 26), 'a' + u8((i / 26) % 26)}
+		_ = runa.shape_text_cached(&font, string(txt), 14, &c)
+		if i % 3 == 0 {
+			_ = runa.shape_text_cached(&font, "stick", 14, &c)
+		}
+	}
+
+	// "stick" must still be in the cache, and the slice we got on
+	// the first call should still point to the same storage (no
+	// allocation on the touch hits, no eviction).
+	sticky_after := runa.shape_text_cached(&font, "stick", 14, &c)
+	testing.expect(t, raw_data(sticky_after) == sticky_ptr, "sticky key survived LRU pressure")
+	testing.expect_value(t, runa.cache_size(&c), 4)
+}
+
+@(test)
+test_cache_unbounded_when_capacity_zero :: proc(t: ^testing.T) {
+	// max_entries = 0 means no eviction (back-compat with v1.0).
+	bytes, ok := load_font_bytes(ROBOTO)
+	if !ok { return }
+	defer delete(bytes)
+
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	c := runa.cache_make(context.allocator, 0)
+	defer runa.cache_destroy(&c)
+
+	for i in 0..<50 {
+		txt := []u8{'z', 'a' + u8(i % 26), 'a' + u8((i / 26) % 26)}
+		_ = runa.shape_text_cached(&font, string(txt), 14, &c)
+	}
+	testing.expect_value(t, runa.cache_size(&c), 50)
+}
+
+@(test)
+test_cache_set_capacity_shrinks :: proc(t: ^testing.T) {
+	// Setting a smaller cap at runtime should evict down to fit.
+	bytes, ok := load_font_bytes(ROBOTO)
+	if !ok { return }
+	defer delete(bytes)
+
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	c := runa.cache_make(context.allocator, 0)
+	defer runa.cache_destroy(&c)
+
+	for i in 0..<30 {
+		txt := []u8{'b', 'a' + u8(i % 26), 'a' + u8((i / 26) % 26)}
+		_ = runa.shape_text_cached(&font, string(txt), 14, &c)
+	}
+	testing.expect_value(t, runa.cache_size(&c), 30)
+
+	runa.cache_set_capacity(&c, 10)
+	testing.expect_value(t, runa.cache_capacity(&c), 10)
+	testing.expect_value(t, runa.cache_size(&c), 10)
+}
+
+@(test)
+test_cache_eviction_no_leaks :: proc(t: ^testing.T) {
+	// Tracking allocator over a high-churn burst — every byte
+	// allocated during shaping must be freed when the cache evicts
+	// or destroys.
+	bytes, ok := load_font_bytes(ROBOTO)
+	if !ok { return }
+	defer delete(bytes)
+
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+
+	{
+		context.allocator = mem.tracking_allocator(&track)
+
+		font, _ := runa.font_load(bytes)
+		defer runa.font_destroy(&font)
+
+		c := runa.cache_make(context.allocator, 16)
+		defer runa.cache_destroy(&c)
+
+		// Insert 500 unique strings with a 16-slot cap — that's 484
+		// evictions plus 16 survivors plus the final destroy of those.
+		for i in 0..<500 {
+			txt := []u8{'k', 'a' + u8(i % 26), 'a' + u8((i / 26) % 26)}
+			_ = runa.shape_text_cached(&font, string(txt), 14, &c)
+		}
+	}
+	// All allocations from the inner scope must be reclaimed by the
+	// destroys deferred at scope exit (font_destroy + cache_destroy).
+	testing.expect_value(t, len(track.allocation_map), 0)
 }
