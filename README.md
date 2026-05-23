@@ -5,17 +5,17 @@ line-breaking, rasterization. Built first to replace fontstash +
 stb_truetype in [Skald](https://github.com/BuLEEto/Skald), designed
 to be useful for any Odin project that needs production-quality text.
 
-**Status:** v1.0.0 — *"The complex-script v1.0 punch list ships."*
-UAX #9 bidi at **100 %**, UAX #29 graphemes at 100 %, CFF2
-variable instances, COLRv1 emoji with the full 28 W3C composite
-blend modes + linear / radial / sweep gradients, GPOS
-mark-to-ligature, frozen API ([`API.md`](API.md)), per-script
-shaping for **Devanagari, Bengali, Gujarati, Kannada, Odia,
-Tamil, Telugu, Malayalam, Gurmukhi, Thai, Lao, Khmer, Myanmar**
-verified against HarfBuzz byte-for-byte, and a Thai word-break
-dictionary so Thai paragraphs reflow at word boundaries rather
-than as one giant unbreakable word. Full scoreboard in
-[`CHANGELOG.md`](CHANGELOG.md).
+**Status:** v1.2.0 — bounded shape cache (LRU) on top of v1.1's
+Latin autohinter and v1.0's complex-script punch list. UAX #9 bidi
+at **100 %**, UAX #29 graphemes at 100 %, CFF2 variable instances,
+COLRv1 emoji with the full 28 W3C composite blend modes + linear /
+radial / sweep gradients, GPOS mark-to-ligature, frozen API
+([`API.md`](API.md)), per-script shaping for **Devanagari, Bengali,
+Gujarati, Kannada, Odia, Tamil, Telugu, Malayalam, Gurmukhi, Thai,
+Lao, Khmer, Myanmar** verified against HarfBuzz byte-for-byte, and
+a Thai word-break dictionary so Thai paragraphs reflow at word
+boundaries rather than as one giant unbreakable word. Full
+scoreboard in [`CHANGELOG.md`](CHANGELOG.md).
 
 <p align="center">
   <img src="screenshots/multiscript.png" alt="runa rendering Latin, Cyrillic, Greek, Arabic (joined RTL), Hebrew (RTL), CJK, colour emoji, and ligatures" width="80%"/>
@@ -107,13 +107,13 @@ sources and licences.
 
 ## Contributing
 
-v1.0.0 has shipped — API frozen ([`API.md`](API.md)), bidi at
-100 %, line break at 99.91 %, graphemes at 100 %, UAX #29 word
-boundaries at 100 %, UAX #15 normalization (NFC / NFD / NFKC /
-NFKD) at 100 %, all 28 COLR composite blend modes, CFF2
-variations, and the full complex-script set (9 Brahmic — Devanagari,
-Bengali, Tamil, Telugu, Kannada, Malayalam, Gurmukhi, Gujarati,
-Odia — plus 4 SEA — Thai, Lao, Myanmar, Khmer) all real. See
+API is frozen ([`API.md`](API.md)) — bidi at 100 %, line break at
+99.91 %, graphemes at 100 %, UAX #29 word boundaries at 100 %,
+UAX #15 normalization (NFC / NFD / NFKC / NFKD) at 100 %, all 28
+COLR composite blend modes, CFF2 variations, and the full
+complex-script set (9 Brahmic — Devanagari, Bengali, Tamil,
+Telugu, Kannada, Malayalam, Gurmukhi, Gujarati, Odia — plus 4
+SEA — Thai, Lao, Myanmar, Khmer) all real. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for build / test instructions
 and the open-work pointer list (long-tail Khmer cluster polish,
 performance hardening, COLRv1 sweep gradients).

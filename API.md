@@ -1,4 +1,4 @@
-# runa API reference (v1.0.0)
+# runa API reference (v1.2.0)
 
 Pure-Odin text engine — parse, shape, line-break, raster, atlas.
 Public API lives in three layers: the **facade** in `runa.odin`,
@@ -193,7 +193,7 @@ BaseGlyphList.
 | `raster` | Analytic-coverage scanline rasterizer + atlas allocator (shelf packing, alpha + RGBA pages). |
 | `normalize` | UAX #15 canonical / compatibility normalization. `to_nfc / to_nfd / to_nfkc / to_nfkd`, `is_nfc / is_nfd`, plus `ccc(r)` for combining class lookups. |
 
-## Unicode conformance (v0.9.2)
+## Unicode conformance
 
 | Standard | Conformance |
 |---|---|
@@ -237,7 +237,7 @@ BaseGlyphList.
 | `tools/deep_stress.odin`      | 2 000-iter end-to-end loop under `Tracking_Allocator` for leak detection. Outlines every glyph of CFF1 + CFF2 fonts and shapes a Devanagari sample set. |
 | `tools/bit_flip_fuzz.odin`    | Bit-flipped corpus fuzz — runs glyph extraction + shape against mangled SFNTs and asserts no panics. |
 
-## Known gaps for v1.0 final
+## Known gaps
 
 - **CFF2 ligature component tracking** — GPOS lookup type 5
   (mark-to-ligature) currently attaches all marks to the last
