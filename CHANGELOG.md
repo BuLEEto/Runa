@@ -9,6 +9,28 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.2.1 — 2026-05-26
+
+### Fixed
+
+- **Indic shaper out-of-bounds crash on a lone reph.** A Devanagari
+  cluster ending in RA + Virama with no following base consonant (e.g.
+  `र्`) made `reorder_reph` compute `base_idx == len` and index past the
+  glyph buffer — a panic, and a denial-of-service vector for anything
+  shaping untrusted text. The reorder now bails when the reph has no
+  base consonant. Regression: `test_devanagari_lone_reph`.
+
+- **Glyph-bitmap allocation is now bounded.** `raster_glyph` accepted any
+  positive size, and the bitmap dimensions (`bbox × size`) were unbounded —
+  so a pathological size, or a malicious font with an absurd glyph bbox,
+  could drive an enormous allocation (OOM). `raster_glyph` now rejects
+  non-finite / non-positive / absurd sizes, and bitmap allocation refuses
+  dimensions past `RASTER_MAX_DIM` (4096) for both alpha and COLR paths.
+  Regression: `test_bitmap_make_dimension_cap`.
+
+Both found by fuzzing the engine (font parse + shape + raster) under
+AddressSanitizer / MemorySanitizer.
+
 ## 1.2.0 — 2026-05-22
 
 Headline: **`runa.Cache` is now bounded.** v1.x shipped an unbounded

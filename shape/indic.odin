@@ -376,6 +376,7 @@ reorder_reph :: proc(gids: ^[dynamic]parse.Glyph_ID, clusters: ^[dynamic]u32, ru
 	lo := syl.lo
 	base := syl.base_idx
 	if base <= lo + 1 { return }                        // base is the reph itself somehow
+	if base >= len(gids) { return }                     // reph with no base consonant after it (e.g. a cluster ending RA+Virama) — nothing to reorder, and gids[base] would be out of bounds
 
 	ra_g  := gids[lo]
 	hal_g := gids[lo + 1]

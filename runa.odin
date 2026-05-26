@@ -990,7 +990,11 @@ font_color_layers :: proc(f: ^Font, gid: Glyph_ID, allocator := context.allocato
 // (per `font_has_color_layers`) are composited via COLR layers and
 // packed into the RGBA pages.
 raster_glyph :: proc(font: ^Font, gid: Glyph_ID, size: f32, subpx_x: u8, atlas: ^Atlas, allocator := context.allocator, hint: bool = true) -> (slot: Atlas_Slot, err: Error) {
-	if size <= 0 { err = .Invalid_Table; return }
+	// Reject non-positive, NaN, Inf, and absurd sizes up front. `!(size > 0)`
+	// catches NaN (every NaN comparison is false) and <= 0; the upper bound
+	// catches +Inf and pathological values before they feed the bitmap
+	// dimensions. (RASTER_MAX_DIM in the rasterizer is the real memory cap.)
+	if !(size > 0) || size > 1e6 { err = .Invalid_Table; return }
 
 	// Scratch for the rasterizer's edge buffer.
 	edges := make([dynamic]raster.Edge, 0, 256, context.temp_allocator)

@@ -531,3 +531,24 @@ test_hint_snap_bottom_of_s_lands_on_integer :: proc(t: ^testing.T) {
 		testing.expect(t, avg_h <= avg_no + 5, "hinted bottom row is not fluffier than unhinted")
 	}
 }
+
+@(test)
+test_bitmap_make_dimension_cap :: proc(t: ^testing.T) {
+	// Guards against unbounded glyph-bitmap allocation: a pathological
+	// font size or a malicious font's absurd glyph bbox feeds huge
+	// dimensions into bitmap_make. It must refuse (ok=false) rather than
+	// attempt an enormous calloc (OOM / abort).
+	bm_ok, ok1 := raster.bitmap_make(raster.RASTER_MAX_DIM, 8)
+	testing.expect(t, ok1, "max-dim bitmap should allocate")
+	raster.bitmap_destroy(&bm_ok)
+
+	_, ok2 := raster.bitmap_make(raster.RASTER_MAX_DIM + 1, 8)
+	testing.expect(t, !ok2, "over-cap width must be refused")
+
+	_, ok3 := raster.bitmap_make(8, 1 << 20)
+	testing.expect(t, !ok3, "over-cap height must be refused")
+
+	// Empty (e.g. space glyph) stays valid.
+	_, ok4 := raster.bitmap_make(0, 0)
+	testing.expect(t, ok4, "empty bitmap is valid")
+}

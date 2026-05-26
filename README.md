@@ -5,7 +5,7 @@ line-breaking, rasterization. Built first to replace fontstash +
 stb_truetype in [Skald](https://github.com/BuLEEto/Skald), designed
 to be useful for any Odin project that needs production-quality text.
 
-**Status:** v1.2.0 — bounded shape cache (LRU) on top of v1.1's
+**Status:** v1.2.1 — bounded shape cache (LRU) on top of v1.1's
 Latin autohinter and v1.0's complex-script punch list. UAX #9 bidi
 at **100 %**, UAX #29 graphemes at 100 %, CFF2 variable instances,
 COLRv1 emoji with the full 28 W3C composite blend modes + linear /

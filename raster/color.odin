@@ -109,6 +109,7 @@ rasterize_colr_layers :: proc(
 	width  := x_max - x_min
 	height := y_max - y_min
 	if width <= 0 || height <= 0 { return }
+	if width > RASTER_MAX_DIM || height > RASTER_MAX_DIM { err = .Out_Of_Memory; return }
 
 	canvas := make([]u8, width * height * 4, allocator)
 	if canvas == nil { err = .Out_Of_Memory; return }

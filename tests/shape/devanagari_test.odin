@@ -41,6 +41,17 @@ test_devanagari_reph :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_devanagari_lone_reph :: proc(t: ^testing.T) {
+	// "र्" — RA + VIRAMA with no base consonant after it (a "lone reph").
+	// reorder_reph used to compute base_idx == len and index past the
+	// glyph array, panicking. Must shape cleanly and produce glyphs.
+	ctx, ok := shape_devanagari(t, "र्")
+	if !ok { return }
+	defer dev_test_destroy(&ctx)
+	testing.expect(t, len(ctx.gids) >= 1, "lone reph should still produce glyphs")
+}
+
+@(test)
 test_devanagari_pre_base_matra :: proc(t: ^testing.T) {
 	ctx, ok := shape_devanagari(t, "कि") // KA + I-MATRA (pre-base)
 	if !ok { return }
