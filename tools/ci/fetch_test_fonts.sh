@@ -42,5 +42,15 @@ fetch \
   "https://github.com/mozilla/twemoji-colr/releases/download/v0.7.0/Twemoji.Mozilla.ttf" \
   "Twemoji-Mozilla.ttf"
 
+# Noto Sans Devanagari (OFL-1.1) — Indic shaping. The exact-gid shape tests
+# stay pinned to a local font, but the version-robust lone-reph regression
+# (test_devanagari_lone_reph) only needs *a* Devanagari font to shape RA+Virama.
+fetch \
+  "https://github.com/notofonts/notofonts.github.io/raw/main/fonts/NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf" \
+  "NotoSansDevanagari.ttf" || \
+fetch \
+  "https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf" \
+  "NotoSansDevanagari.ttf"
+
 echo "fetched:"
 ls -lh "$DEST"

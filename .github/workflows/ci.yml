@@ -45,6 +45,26 @@ jobs:
         run: odin test tests/atlas
       - name: Test linebreak
         run: odin test tests/linebreak
+      - name: Test bidi
+        run: odin test tests/bidi
+      - name: Test itemize
+        run: odin test tests/itemize
+      - name: Test normalize
+        run: odin test tests/normalize
+
+      # The full shape suite asserts exact glyph IDs pinned to specific font
+      # versions, so it's not run in CI. But the lone-reph regression
+      # (test_devanagari_lone_reph) is version-robust — it only checks the
+      # RA+Virama "र्" cluster shapes without the OOB crash. Run just that one,
+      # if the Devanagari font was fetched.
+      - name: Test indic reph regression
+        shell: bash
+        run: |
+          if [ -f tests/fonts/NotoSansDevanagari.ttf ]; then
+            odin test tests/shape -define:ODIN_TEST_NAMES=shape_test.test_devanagari_lone_reph
+          else
+            echo "no Devanagari font — skipping indic regression"
+          fi
 
       - name: UAX #14 conformance
         shell: bash
