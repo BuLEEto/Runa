@@ -29,6 +29,13 @@ new optional features) live under `### Added` / `### Changed`.
   against the vendored UCD so a bad table regeneration cannot pass
   silently.
 
+- **Default-ignorables no longer paint.** U+061C ARABIC LETTER MARK
+  rendered as a visible 0.6 em glyph mid-word; LRM / RLM / soft hyphen /
+  variation selectors were likewise drawn. They now emit a zero-advance
+  space, matching HarfBuzz, while still doing their job in the joining
+  and bidi passes — ZWNJ continues to break the cursive chain.
+  Regression: `test_default_ignorables_do_not_paint`.
+
 ### Known gaps
 
 - **Ligatures do not skip marks.** `لَا` still fails to form the lam-alef
@@ -37,11 +44,14 @@ new optional features) live under `### Added` / `### Changed`.
   `LOOKUP_FLAG_IGNORE_MARKS` is ignored and the fatha blocks the match.
   Needs a GDEF parser. The joining fix is a prerequisite for this, not a
   substitute.
-- **Default-ignorables are not hidden** — U+061C, U+00AD, U+202B render as
-  visible glyphs. Pre-existing, more noticeable now letters join around
-  them.
 - **`shape_run` does not normalize**, which Quranic text depends on
   (ALEF + MADDAH).
+- **Malayalam diverges from HarfBuzz on common words** — `കാര്യം`
+  (*kāryaṃ*) shapes to `[23 64 148 49 6]` against HarfBuzz's
+  `[23 64 50 160 6]`. Devanagari NGA conjuncts (`कङ्क`) likewise. Common
+  Devanagari is unaffected (`नमस्ते`, `हिन्दी` match). README's script
+  table now states this rather than claiming byte-for-byte parity across
+  all 13 scripts.
 
 ## 1.2.2 — 2026-07-25
 

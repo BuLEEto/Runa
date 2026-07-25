@@ -258,3 +258,46 @@ test_arabic_vocalised_joins_end_to_end :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+@(test)
+test_default_ignorables_do_not_paint :: proc(t: ^testing.T) {
+	// LRM / RLM / ALM and friends carry meaning for bidi and joining but
+	// must not render. U+061C used to come out as a visible 600-unit
+	// glyph mid-word. HarfBuzz emits a zero-advance space; so do we.
+	//
+	// The letters must also still join around them — the ignorable is
+	// transparent to the cursive chain, unlike ZWNJ which breaks it.
+	bytes, err := os.read_entire_file_from_path(ARABIC_FONT, context.allocator)
+	if err != nil {
+		log.info("NotoSansArabic-Regular.ttf not present; skipping")
+		return
+	}
+	defer delete(bytes)
+
+	f, ferr := runa.font_load(bytes)
+	if ferr != .None { log.info("font_load failed; skipping"); return }
+	defer runa.font_destroy(&f)
+
+	space := runa.font_lookup_glyph(&f, ' ')
+	out := make([dynamic]shape.Shaped_Glyph, 0, 8)
+	defer delete(out)
+
+	for text in ([]string{"ب؜ب", "ب‏ب", "ب­ب"}) {
+		clear(&out)
+		inputs := shape.Shape_Inputs{
+			cmap = &f._cmap, hmtx = &f._hmtx,
+			gsub = f._has_gsub ? &f._gsub : nil,
+			gpos = f._has_gpos ? &f._gpos : nil,
+			units_per_em = f.units_per_em,
+		}
+		opts := shape.Shape_Run_Opts{script = parse.tag("arab"), language = parse.DFLT_LANG}
+		shape.shape_run(&inputs, opts, text, f32(f.units_per_em), &out)
+
+		if !testing.expect_value(t, len(out), 3) { continue }
+		testing.expect_value(t, out[1].glyph_id, space)
+		testing.expect_value(t, out[1].x_advance, f32(0))
+		// Joined forms either side, not the isolated gid 100.
+		testing.expect(t, out[0].glyph_id != 100, "letter before an ignorable must still join")
+		testing.expect(t, out[2].glyph_id != 100, "letter after an ignorable must still join")
+	}
+}
