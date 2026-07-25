@@ -1,5 +1,5 @@
 /*
-Repro tool for the boc-next runa-bug-report.md cases. Loads
+Repro tool for the Inter GSUB bug-report cases. Loads
 InterVariable.ttf, applies each of the six v0.1 GSUB features in
 isolation against four input strings, and dumps which feature
 rewrote which glyphs.

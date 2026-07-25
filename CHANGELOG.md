@@ -9,6 +9,59 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.2.2 — 2026-07-25
+
+### Fixed
+
+- **Indic reph reordering corrupted glyph order before punctuation.** A
+  Devanagari word ending in RA + VIRAMA followed by any non-Indic
+  character — a space, comma, digit, Latin letter, or the danda `।`
+  (Devanagari's full stop) — emitted that character *ahead of* the
+  syllable. `कर् क` shaped to `[ka, space, reph, ka]` instead of
+  `[ka, reph, space, ka]`. Bengali, Kannada, Gujarati and Odia share the
+  code path and were equally affected.
+
+  Root cause: when a reph leads a syllable with no base after it,
+  `identify_base` fell back to `base_idx = scan_from`, which points past
+  the syllable — at the *next* syllable's first glyph. `reorder_reph`
+  then rotated that neighbouring glyph into the cluster.
+
+  This is the same defect as the 1.2.1 crash. That fix guarded the crash
+  site (`base >= len(gids)`), which only fires when the bad index runs off
+  the end of the whole buffer; with any following character the index is
+  in-bounds-but-wrong, so it produced silent corruption rather than a
+  panic. 1.2.2 fixes the root: no base position is invented for a
+  reph-led syllable that has none, and an independent vowel is now
+  correctly recognised as a base candidate (the OpenType Devanagari
+  vowel-based syllable `[Ra H] V …` is spec-sanctioned, and `र्अ` must
+  keep emitting the reph *after* its vowel base).
+
+  Regressions: `test_devanagari_reph_before_non_indic`,
+  `test_devanagari_reph_before_danda`,
+  `test_devanagari_reph_punct_order_robust` (version-robust, runs in CI),
+  `test_devanagari_reph_with_independent_vowel`,
+  `test_devanagari_reph_vowel_pre_base_matra`.
+
+### Known gaps surfaced while fixing the above
+
+Documented rather than fixed — all pre-existing, none introduced by this
+release:
+
+- Arabic combining marks resolve to `Joining_Type=X`, so a single fatha
+  severs cursive joining: vocalised Arabic renders disconnected.
+- `rphf` is applied buffer-wide with no positional gate, so runa forms a
+  reph where HarfBuzz declines to (no base present). The 1.2.2 tests pin
+  the *ordering*, which HarfBuzz agrees with, not this composition.
+- Cluster indices desync after ligation (`resize` truncates from the
+  right; GSUB removes from the middle), so glyphs after a ligature report
+  an earlier byte offset.
+- The Indic v1-script-tag retry fires whenever a v2 feature matched
+  nothing, applying v1-only lookups to fonts that ship v2.
+- GPOS mark attachment omits the base's `hmtx` advance; `abvm` / `blwm` /
+  `dist` are never applied; `Lookup_Info.flag` is ignored.
+- Cursive joining is gated on `script == "arab"`, so Syriac never gets
+  init / medi / fina.
+
 ## 1.2.1 — 2026-05-26
 
 ### Fixed
