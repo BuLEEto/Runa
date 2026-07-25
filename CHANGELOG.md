@@ -44,8 +44,12 @@ new optional features) live under `### Added` / `### Changed`.
   `LOOKUP_FLAG_IGNORE_MARKS` is ignored and the fatha blocks the match.
   Needs a GDEF parser. The joining fix is a prerequisite for this, not a
   substitute.
-- **`shape_run` does not normalize**, which Quranic text depends on
-  (ALEF + MADDAH).
+- **`shape_run` does not normalize.** Quranic Arabic depends on it
+  (ALEF + MADDAH), and it also shows up in Hebrew nikud: `שָׁלוֹם` shapes
+  with two combining marks in the opposite order to HarfBuzz
+  (`… 100 79 96` vs `… 79 100 96`) because the canonical reordering
+  pass is missing. The `normalize` package implements NFC/NFD/NFKC/NFKD
+  at 100 % conformance; the shaper just does not call it.
 - **Malayalam diverges from HarfBuzz on common words** — `കാര്യം`
   (*kāryaṃ*) shapes to `[23 64 148 49 6]` against HarfBuzz's
   `[23 64 50 160 6]`. Devanagari NGA conjuncts (`कङ्क`) likewise. Common

@@ -19,9 +19,9 @@ unbreakable word. Full scoreboard in [`CHANGELOG.md`](CHANGELOG.md).
 
 Shaping accuracy varies by script — see
 [Script status](#script-status) before picking runa for a specific
-language. Latin, Cyrillic, Greek, Hebrew and Arabic are solid;
-Malayalam and some Devanagari conjuncts have known divergences from
-HarfBuzz.
+language. Latin, Cyrillic, Greek and unpointed Hebrew are solid; Malayalam,
+some Devanagari conjuncts, Arabic ligatures-with-marks and Hebrew
+nikud have known divergences from HarfBuzz.
 
 <p align="center">
   <img src="screenshots/multiscript.png" alt="runa rendering Latin, Cyrillic, Greek, Arabic (joined RTL), Hebrew (RTL), CJK, colour emoji, and ligatures" width="80%"/>
@@ -73,11 +73,10 @@ every possible string is guaranteed identical.
 | Script | Status |
 |---|---|
 | Latin / Cyrillic / Greek | Matches HarfBuzz. Production. |
-| Hebrew | Matches HarfBuzz, including RTL through the bidi pipeline. |
+| Hebrew | Unpointed text matches HarfBuzz, including RTL through the bidi pipeline. Pointed text (nikud) orders combining marks differently — see normalization gap below. |
 | Arabic | Joining, marks and mark positioning match HarfBuzz. **Ligatures do not skip marks** — `لَا` fails to form lam-alef. |
 | Devanagari | Common words match (`नमस्ते`, `हिन्दी`). NGA conjuncts (`कङ्क`) diverge. |
-| Bengali / Gujarati / Kannada / Odia / Gurmukhi | Shaper implemented, spot-checked against HarfBuzz. Not swept. |
-| Tamil / Telugu | Shaper implemented. Not swept. |
+| Bengali / Gujarati / Kannada / Odia / Gurmukhi / Tamil / Telugu | Spot-checked against HarfBuzz and matching on those samples. Not swept. |
 | **Malayalam** | **Known divergence on common words** — `കാര്യം` shapes differently from HarfBuzz. |
 | Thai / Lao | Standard GSUB plus the Thai word-break dictionary. |
 | Khmer / Myanmar | Indic pipeline; canonical syllables checked, long tail unverified. |
@@ -142,12 +141,13 @@ sources and licences.
 ## Contributing
 
 API is frozen ([`API.md`](API.md)) — bidi at 100 %, line break at
-99.91 %, graphemes at 100 %, UAX #29 word boundaries at 100 %,
+99.94 %, graphemes at 100 %, UAX #29 word boundaries at 100 %,
 UAX #15 normalization (NFC / NFD / NFKC / NFKD) at 100 %, all 28
-COLR composite blend modes, CFF2 variations, and the full
-complex-script set (9 Brahmic — Devanagari, Bengali, Tamil,
-Telugu, Kannada, Malayalam, Gurmukhi, Gujarati, Odia — plus 4
-SEA — Thai, Lao, Myanmar, Khmer) all real. See
+COLR composite blend modes, CFF2 variations, and shapers for the
+9 Brahmic scripts (Devanagari, Bengali, Tamil, Telugu, Kannada,
+Malayalam, Gurmukhi, Gujarati, Odia) plus 4 SEA (Thai, Lao,
+Myanmar, Khmer) — see [Script status](#script-status) for
+per-script accuracy. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for build / test instructions
 and the open-work pointer list (long-tail Khmer cluster polish,
 performance hardening, COLRv1 sweep gradients).
