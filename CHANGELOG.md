@@ -9,46 +9,69 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.2.3 — 2026-07-25
+
+### Fixed
+
+- **A single combining mark severed Arabic cursive joining.** Any harakat
+  broke the chain, so all vocalised Arabic rendered as disconnected
+  isolated forms — `بَب` shaped to three isolated BEHs.
+
+  `ArabicShaping.txt` omits `Joining_Type=T` characters by design,
+  defining them as the unlisted Mn/Me/Cf codepoints. runa returned its
+  non-joining sentinel for everything unlisted, which the state machine
+  treats as chain-breaking. `joining_type` now derives the Transparent
+  set from General_Category, still consulting the explicit listing first
+  — ZWJ and ZWNJ are both `Cf` but listed `C` / `U`.
+
+  `بب`, `بَب`, `بَبَب` and `مُحَمَّد` now match HarfBuzz glyph-for-glyph.
+  `test_transparent_table_matches_ucd` sweeps the whole codepoint space
+  against the vendored UCD so a bad table regeneration cannot pass
+  silently.
+
+### Known gaps
+
+- **Ligatures do not skip marks.** `لَا` still fails to form the lam-alef
+  ligature: HarfBuzz `[291, 704]`, runa `[47, 291, 667]`. GSUB matching is
+  adjacency-only and never consults `Lookup_Info.flag`, so
+  `LOOKUP_FLAG_IGNORE_MARKS` is ignored and the fatha blocks the match.
+  Needs a GDEF parser. The joining fix is a prerequisite for this, not a
+  substitute.
+- **Default-ignorables are not hidden** — U+061C, U+00AD, U+202B render as
+  visible glyphs. Pre-existing, more noticeable now letters join around
+  them.
+- **`shape_run` does not normalize**, which Quranic text depends on
+  (ALEF + MADDAH).
+
 ## 1.2.2 — 2026-07-25
 
 ### Fixed
 
 - **Indic reph reordering corrupted glyph order before punctuation.** A
   Devanagari word ending in RA + VIRAMA followed by any non-Indic
-  character — a space, comma, digit, Latin letter, or the danda `।`
-  (Devanagari's full stop) — emitted that character *ahead of* the
-  syllable. `कर् क` shaped to `[ka, space, reph, ka]` instead of
-  `[ka, reph, space, ka]`. Bengali, Kannada, Gujarati and Odia share the
-  code path and were equally affected.
+  character — space, comma, digit, Latin letter, or the danda `।` —
+  emitted that character *ahead of* the syllable: `कर् क` shaped to
+  `[ka, space, reph, ka]`. Bengali, Kannada, Gujarati and Odia share the
+  code path.
 
-  Root cause: when a reph leads a syllable with no base after it,
-  `identify_base` fell back to `base_idx = scan_from`, which points past
-  the syllable — at the *next* syllable's first glyph. `reorder_reph`
-  then rotated that neighbouring glyph into the cluster.
+  When a reph leads a syllable with no base after it, `identify_base`
+  fell back to an index pointing past the syllable, at the next
+  syllable's first glyph, which `reorder_reph` then rotated into the
+  cluster. Same defect as the 1.2.1 crash — that fix guarded the crash
+  site, which only fires when the index runs off the whole buffer, so
+  with a following character it corrupted silently instead of panicking.
 
-  This is the same defect as the 1.2.1 crash. That fix guarded the crash
-  site (`base >= len(gids)`), which only fires when the bad index runs off
-  the end of the whole buffer; with any following character the index is
-  in-bounds-but-wrong, so it produced silent corruption rather than a
-  panic. 1.2.2 fixes the root: no base position is invented for a
-  reph-led syllable that has none, and an independent vowel is now
-  correctly recognised as a base candidate (the OpenType Devanagari
-  vowel-based syllable `[Ra H] V …` is spec-sanctioned, and `र्अ` must
-  keep emitting the reph *after* its vowel base).
-
-  Regressions: `test_devanagari_reph_before_non_indic`,
-  `test_devanagari_reph_before_danda`,
-  `test_devanagari_reph_punct_order_robust` (version-robust, runs in CI),
-  `test_devanagari_reph_with_independent_vowel`,
-  `test_devanagari_reph_vowel_pre_base_matra`.
+  1.2.2 fixes the root, and recognises an independent vowel as a base
+  candidate: the OpenType vowel-based syllable `[Ra H] V …` is
+  spec-sanctioned, so `र्अ` must keep emitting the reph after its vowel.
 
 ### Known gaps surfaced while fixing the above
 
-Documented rather than fixed — all pre-existing, none introduced by this
-release:
+Pre-existing, none introduced by this release:
 
-- Arabic combining marks resolve to `Joining_Type=X`, so a single fatha
-  severs cursive joining: vocalised Arabic renders disconnected.
+- ~~Arabic combining marks resolve to `Joining_Type=X`, so a single fatha
+  severs cursive joining: vocalised Arabic renders disconnected.~~
+  **Fixed in 1.2.3.**
 - `rphf` is applied buffer-wide with no positional gate, so runa forms a
   reph where HarfBuzz declines to (no base present). The 1.2.2 tests pin
   the *ordering*, which HarfBuzz agrees with, not this composition.

@@ -53,26 +53,16 @@ test_devanagari_lone_reph :: proc(t: ^testing.T) {
 
 @(test)
 test_devanagari_reph_before_non_indic :: proc(t: ^testing.T) {
-	// "र् क" — a word ending in RA + VIRAMA, then SPACE, then KA.
-	// The space breaks the cluster at lo+2, so the reph syllable has no
-	// base consonant. `identify_base` used to fall back to
-	// `base_idx = scan_from`, which in that case points at the *next*
-	// syllable's first glyph — and `reorder_reph` then rotated the space
-	// to the front of the run. Output was [3, 181, 25] (space, reph, ka)
-	// instead of [181, 3, 25].
+	// "र् क" — the space breaks the cluster at lo+2, so the reph syllable
+	// has no base. `identify_base` used to fall back to an index pointing
+	// at the NEXT syllable's first glyph, and reorder_reph rotated the
+	// space to the front: [3, 181, 25] instead of [181, 3, 25].
+	// In-bounds-but-wrong, so the 1.2.1 guard never fired.
 	//
-	// This is in-bounds-but-wrong, so the v1.2.1 `base >= len(gids)`
-	// guard never fired: silent text corruption, not a crash.
-	//
-	// NOTE: unlike the rest of this file, the exact gids here are NOT
-	// HarfBuzz-verified. HarfBuzz emits [52, 81, 3, 25] — it declines to
-	// form a reph at all when there is no base consonant to carry it,
-	// whereas runa applies `rphf` buffer-wide with no positional gate and
-	// collapses RA+VIRAMA to rephdeva (181). That composition divergence
-	// is a separate, pre-existing defect. What this test pins is the
-	// *ordering*, which HarfBuzz agrees with: the space stays after the
-	// syllable. See test_devanagari_reph_punct_order_robust for the
-	// version-independent form of the same invariant.
+	// NOTE: gids here are NOT HarfBuzz-verified — HB emits [52, 81, 3, 25]
+	// because it declines to form a reph with no base, while runa applies
+	// `rphf` ungated. That divergence is separate and pre-existing; what
+	// this pins is the ordering, which HB does agree with.
 	ctx, ok := shape_devanagari(t, "र् क")
 	if !ok { return }
 	defer dev_test_destroy(&ctx)
@@ -89,8 +79,7 @@ test_devanagari_reph_before_danda :: proc(t: ^testing.T) {
 	// stop, so this is the common real-text trigger rather than a
 	// synthetic one. Punctuation must not sort ahead of the syllable.
 	//
-	// Same caveat as above: HarfBuzz emits [52, 81, 104]; the reph
-	// composition is runa-specific, the ordering is the invariant.
+	// Same caveat: HB emits [52, 81, 104]. Ordering is the invariant.
 	ctx, ok := shape_devanagari(t, "र्।")
 	if !ok { return }
 	defer dev_test_destroy(&ctx)
@@ -102,14 +91,10 @@ test_devanagari_reph_before_danda :: proc(t: ^testing.T) {
 
 @(test)
 test_devanagari_reph_punct_order_robust :: proc(t: ^testing.T) {
-	// Version-independent form of the two tests above: resolve the gids
-	// through the font's own cmap instead of hardcoding them, so this
-	// survives a font update and can run in CI (which fetches a different
-	// NotoSansDevanagari build — the rest of this suite is skipped there
-	// precisely because it pins exact gids).
-	//
-	// Invariant: a syllable-final reph must not let the following
-	// punctuation sort ahead of it. Pre-fix the space came out first.
+	// Version-independent form of the two above — gids come from the
+	// font's own cmap, so this survives a font update and runs in CI.
+	// Invariant: punctuation must not sort ahead of a syllable-final
+	// reph. Pre-fix the space came out first.
 	ctx, ok := shape_devanagari(t, "र् क")
 	if !ok { return }
 	defer dev_test_destroy(&ctx)
@@ -127,19 +112,13 @@ test_devanagari_reph_punct_order_robust :: proc(t: ^testing.T) {
 
 @(test)
 test_devanagari_reph_with_independent_vowel :: proc(t: ^testing.T) {
-	// "कर्अ" — KA, then a reph whose base is an INDEPENDENT VOWEL rather
-	// than a consonant. The OpenType Devanagari grammar's vowel-based
-	// syllable is `[Ra H] V [N] ... [{M}] [SM] [(H|VD)]`, so this is
-	// spec-sanctioned, not a defective cluster.
+	// "कर्अ" — a reph whose base is an independent vowel. Spec-sanctioned:
+	// the vowel-based syllable is `[Ra H] V …`. Guards the punctuation fix
+	// from overcorrecting — gating the fallback on `!has_reph` alone
+	// discarded the vowel as a base and emitted [25, 181, 9], putting the
+	// zero-advance reph on the preceding letter.
 	//
-	// Guards the fix for the reph-before-punctuation bug from
-	// overcorrecting: an earlier attempt gated the `identify_base`
-	// fallback on `!has_reph` alone, which discarded the vowel as a base
-	// and emitted the reph BEFORE it ([25, 181, 9]). rephdeva has zero
-	// advance and paints backwards from its pen, so that put the mark on
-	// the preceding letter.
-	//
-	// HarfBuzz reference: [25, 9, 181] — ka, adeva, rephdeva.
+	// HarfBuzz: [25, 9, 181].
 	ctx, ok := shape_devanagari(t, "कर्अ")
 	if !ok { return }
 	defer dev_test_destroy(&ctx)
@@ -152,12 +131,9 @@ test_devanagari_reph_with_independent_vowel :: proc(t: ^testing.T) {
 
 @(test)
 test_devanagari_reph_vowel_pre_base_matra :: proc(t: ^testing.T) {
-	// "र्अि" — reph + independent vowel + pre-base I-matra. Exercises
-	// reorder_pre_base_matra on a vowel base: the matra must reorder to
-	// the front AND pick up its contextual pre-base form (604), not the
-	// plain post-base one (67).
-	//
-	// HarfBuzz reference: [604, 9, 181].
+	// reph + independent vowel + pre-base I-matra. The matra must reorder
+	// to the front and take its contextual pre-base form (604), not the
+	// plain post-base one (67). HarfBuzz: [604, 9, 181].
 	ctx, ok := shape_devanagari(t, "र्अि")
 	if !ok { return }
 	defer dev_test_destroy(&ctx)

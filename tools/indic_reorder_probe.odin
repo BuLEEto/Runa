@@ -1,8 +1,7 @@
 /*
-Probe for Indic reorder index arithmetic. Shapes a set of Devanagari
-inputs designed to drive `identify_base` into its fallback path (where
-`base_idx` can land on or past the syllable end) and dumps the glyph
-order so we can see whether reorder_reph permutes glyphs it shouldn't.
+Probe for Indic reorder index arithmetic. Drives `identify_base` into
+its fallback path and dumps glyph order, to see whether reorder_reph
+permutes glyphs it shouldn't.
 
 Run:
     odin run tools/indic_reorder_probe.odin -file

@@ -1,11 +1,12 @@
 /*
 Arabic Joining_Type lookup + state-machine tests.
 
-Reference: the spec's Arabic shaping tables (UAX §9.2 Appendix B).
-We don't claim full conformance against the test vectors yet —
-runa's GSUB integration of init/medi/fina/isol features is the next
-step — but the joining state itself must agree with the spec on
-canonical Arabic strings.
+Reference: UAX §9.2 Appendix B plus `ArabicShaping.txt`, which omits
+Transparent characters by design — runa derives them from
+General_Category Mn/Me/Cf.
+
+Most tests here are font-independent and run in CI. The end-to-end one at
+the bottom pins HarfBuzz gids and skips if the font is absent.
 */
 package shape_test
 
@@ -23,12 +24,70 @@ test_joining_type_basic :: proc(t: ^testing.T) {
 	testing.expect_value(t, shape.joining_type('ـ'), shape.Joining_Type.C)
 	// Latin letter — not Arabic — should fall to X.
 	testing.expect_value(t, shape.joining_type('a'), shape.Joining_Type.X)
-	// Arabic combining marks (e.g. U+0670 ARABIC LETTER SUPERSCRIPT
-	// ALEF) are Transparent per UAX #9, but ArabicShaping.txt lists
-	// them implicitly via "default to T for general category Mn/Cf".
-	// runa doesn't yet read general-category data for joining defaults
-	// — these characters currently fall through to .X. Track for
-	// fix when the Arabic shaper integrates with GSUB.
+}
+
+@(test)
+test_joining_type_transparent_marks :: proc(t: ^testing.T) {
+	// The Mn/Me/Cf derivation. Without it a single harakat severs the
+	// cursive chain — see test_arabic_join_state_mark_is_transparent.
+	for r in ([]rune{
+		0x064E, // FATHA
+		0x064F, // DAMMA
+		0x0650, // KASRA
+		0x0651, // SHADDA
+		0x0652, // SUKUN
+		0x0670, // SUPERSCRIPT ALEF
+		0x0653, // MADDAH ABOVE
+		0x0483, // COMBINING CYRILLIC TITLO (Mn, non-Arabic)
+		0x0591, // HEBREW ACCENT ETNAHTA (Mn)
+	}) {
+		testing.expect_value(t, shape.joining_type(r), shape.Joining_Type.T)
+	}
+
+	// Explicit listing must win: both are Cf, so a naive derivation would
+	// call them Transparent and break ZWJ joining / ZWNJ breaking.
+	testing.expect_value(t, shape.joining_type(0x200D), shape.Joining_Type.C) // ZWJ
+	testing.expect_value(t, shape.joining_type(0x200C), shape.Joining_Type.U) // ZWNJ
+}
+
+@(test)
+test_arabic_join_state_mark_is_transparent :: proc(t: ^testing.T) {
+	// "بَب" — the fatha passes through, leaving the BEHs joined to each
+	// other. Pre-fix it resolved to .X, which breaks the chain, so all
+	// three came out Isolated and vocalised Arabic rendered disconnected.
+	runes := []rune{'ب', 0x064E, 'ب'}
+	forms := make([]shape.Joining_Form, len(runes))
+	defer delete(forms)
+	shape.arabic_join_state(runes, forms)
+
+	testing.expect_value(t, forms[0], shape.Joining_Form.Initial)
+	testing.expect_value(t, forms[1], shape.Joining_Form.Isolated) // the mark itself
+	testing.expect_value(t, forms[2], shape.Joining_Form.Final)
+}
+
+@(test)
+test_arabic_join_state_multiple_marks_transparent :: proc(t: ^testing.T) {
+	// Stacked marks must not break the chain either.
+	runes := []rune{'ب', 0x064E, 0x064F, 'ب'}
+	forms := make([]shape.Joining_Form, len(runes))
+	defer delete(forms)
+	shape.arabic_join_state(runes, forms)
+
+	testing.expect_value(t, forms[0], shape.Joining_Form.Initial)
+	testing.expect_value(t, forms[3], shape.Joining_Form.Final)
+}
+
+@(test)
+test_arabic_join_state_zwnj_still_breaks :: proc(t: ^testing.T) {
+	// ZWNJ is Cf but explicitly listed U, so it must still break the
+	// chain despite the derivation.
+	runes := []rune{'ب', 0x200C, 'ب'}
+	forms := make([]shape.Joining_Form, len(runes))
+	defer delete(forms)
+	shape.arabic_join_state(runes, forms)
+
+	testing.expect_value(t, forms[0], shape.Joining_Form.Isolated)
+	testing.expect_value(t, forms[2], shape.Joining_Form.Isolated)
 }
 
 @(test)
@@ -75,6 +134,7 @@ test_arabic_join_state_isolated_alef :: proc(t: ^testing.T) {
 import "core:log"
 import "core:os"
 import parse "../../parse"
+import runa  "../.."
 
 ARABIC_FONT :: "tests/fonts/NotoSansArabic-Regular.ttf"
 
@@ -142,5 +202,59 @@ test_arabic_join_state_non_arabic_does_nothing :: proc(t: ^testing.T) {
 	shape.arabic_join_state(runes, forms)
 	for f in forms {
 		testing.expect_value(t, f, shape.Joining_Form.Isolated)
+	}
+}
+
+// ---- End-to-end joining across marks -------------------------------
+
+@(test)
+test_arabic_vocalised_joins_end_to_end :: proc(t: ^testing.T) {
+	// Full-pipeline check. Gids are HarfBuzz reference output for
+	// NotoSansArabic-Regular.ttf, reversed — HarfBuzz reports RTL in
+	// visual order, shape_run emits logical. Pre-fix every letter
+	// position shaped to the isolated form (gid 100).
+	bytes, err := os.read_entire_file_from_path(ARABIC_FONT, context.allocator)
+	if err != nil {
+		log.info("NotoSansArabic-Regular.ttf not present; skipping")
+		return
+	}
+	defer delete(bytes)
+
+	f, ferr := runa.font_load(bytes)
+	if ferr != .None { log.info("font_load failed; skipping"); return }
+	defer runa.font_destroy(&f)
+
+	Case :: struct {
+		text:     string,
+		expected: []parse.Glyph_ID,   // logical order
+	}
+	cases := []Case{
+		// HarfBuzz visual [101 102]         -> logical [102 101]
+		{"بب",   {102, 101}},
+		// HarfBuzz visual [101 291 102]     -> logical [102, 291, 101]
+		{"بَب",  {102, 291, 101}},
+		// HarfBuzz visual [101 291 104 291 102]
+		{"بَبَب", {102, 291, 104, 291, 101}},
+	}
+
+	out := make([dynamic]shape.Shaped_Glyph, 0, 16)
+	defer delete(out)
+
+	for c in cases {
+		clear(&out)
+		inputs := shape.Shape_Inputs{
+			cmap         = &f._cmap,
+			hmtx         = &f._hmtx,
+			gsub         = f._has_gsub ? &f._gsub : nil,
+			gpos         = f._has_gpos ? &f._gpos : nil,
+			units_per_em = f.units_per_em,
+		}
+		opts := shape.Shape_Run_Opts{script = parse.tag("arab"), language = parse.DFLT_LANG}
+		shape.shape_run(&inputs, opts, c.text, 48.0, &out)
+
+		if !testing.expect_value(t, len(out), len(c.expected)) { continue }
+		for want, i in c.expected {
+			testing.expect_value(t, out[i].glyph_id, want)
+		}
 	}
 }

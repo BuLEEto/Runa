@@ -67,6 +67,18 @@ jobs:
             echo "no Devanagari font — skipping indic regression"
           fi
 
+      # Arabic cursive joining across Transparent marks. These assert
+      # Joining_Type / Joining_Form rather than glyph IDs, so they are
+      # font-independent and always safe to run.
+      - name: Test Arabic joining regression
+        shell: bash
+        run: |
+          out=$(odin test tests/shape -define:ODIN_TEST_NAMES=shape_test.test_joining_type_transparent_marks,shape_test.test_arabic_join_state_mark_is_transparent,shape_test.test_arabic_join_state_multiple_marks_transparent,shape_test.test_arabic_join_state_zwnj_still_breaks,shape_test.test_transparent_table_matches_ucd 2>&1)
+          echo "$out"
+          # ODIN_TEST_NAMES silently runs nothing (exit 0) if a name drifts,
+          # so assert the expected count actually ran.
+          echo "$out" | grep -q "Finished 5 tests" || { echo "::error::expected 5 tests to run — a test name has drifted"; exit 1; }
+
       - name: UAX #14 conformance
         shell: bash
         run: |
