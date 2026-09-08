@@ -29,6 +29,19 @@ new optional features) live under `### Added` / `### Changed`.
   for the rest of each contour. Untouched points now interpolate from
   their nearest touched neighbours along the contour.
 
+### Known gaps surfaced while fixing the above
+
+- **CFF2 outlines fail for some glyphs even at the default instance.**
+  ~20 glyphs in Source Code VF return `.Invalid_Table` from
+  `font_glyph_outline` with no axis set — a CFF2 charstring parse gap, not
+  a variation bug (the gvar fix above is glyf-only). Repro: sweep
+  `font_glyph_outline` over `tests/fonts/SourceCodeVF.otf`; the failures
+  are identical at the default instance and at wght=600.
+- **COLR layers are not varied.** `raster/color.odin` / `color_brush.odin`
+  render COLR base-glyph layers through the static `glyf_outline`, so a
+  variable COLR font's layers stay at their default instance. (COLRv1
+  varies its paints via an ItemVariationStore — a separate path from gvar.)
+
 ## 1.2.3 — 2026-07-25
 
 ### Fixed
