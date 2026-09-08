@@ -9,6 +9,26 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.2.4 — 2026-09-08
+
+### Fixed
+
+- **Variable composite glyphs no longer vanish off the default instance.**
+  `font_glyph_outline` flattened a composite (e.g. Inter's `i`, `j`, `,`)
+  and then applied its gvar deltas to the flattened points — but a
+  composite's deltas move its *component offsets* (+4 phantoms), not the
+  points, so the counts mismatched and every composite returned
+  `.Invalid_Table` at any non-default axis. Outlines are now varied while
+  parsing: a simple glyph gets its own point deltas, a composite varies
+  each component's placement and recurses. Regression:
+  `test_variable_composite_glyph_outline`.
+
+- **Implemented IUP (interpolation of untouched points).** Tuples carrying
+  a sparse point list previously moved only their explicit points, subtly
+  distorting glyphs that rely on the spec's inferred-delta interpolation
+  for the rest of each contour. Untouched points now interpolate from
+  their nearest touched neighbours along the contour.
+
 ## 1.2.3 — 2026-07-25
 
 ### Fixed

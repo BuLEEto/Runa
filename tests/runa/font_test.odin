@@ -626,3 +626,48 @@ test_cache_eviction_no_leaks :: proc(t: ^testing.T) {
 	// destroys deferred at scope exit (font_destroy + cache_destroy).
 	testing.expect_value(t, len(track.allocation_map), 0)
 }
+
+@(test)
+test_variable_composite_glyph_outline :: proc(t: ^testing.T) {
+	// Regression: a composite glyph's gvar deltas move its component
+	// offsets, not the flattened outline points. Varying a flattened
+	// composite mis-counts deltas and used to return .Invalid_Table, so
+	// Inter's i / j / comma / etc. vanished at any non-default weight.
+	// They must now produce a valid, non-empty, actually-shifted outline.
+	bytes, ok := load_font_bytes("tests/fonts/InterVariable.ttf")
+	if !ok { log.info("InterVariable.ttf not present; skipping"); return }
+	defer delete(bytes)
+
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	// Default-instance outline of 'i' for a shift comparison.
+	i_gid := runa.font_lookup_glyph(&font, 'i')
+	base := runa.Outline{}
+	defer runa.outline_destroy(&base)
+	testing.expect_value(t, runa.font_glyph_outline(&font, i_gid, &base), runa.Error.None)
+
+	werr := runa.font_set_variation(&font, runa.Axis_Tag(0x77676874), 600) // 'wght'
+	testing.expect_value(t, werr, runa.Error.None)
+
+	// Composite glyphs, including a composite-of-composites ('ñ').
+	for ch in ([]rune{'i', 'j', ',', ';', ':', '"', 'ñ'}) {
+		gid := runa.font_lookup_glyph(&font, ch)
+		o := runa.Outline{}
+		defer runa.outline_destroy(&o)
+		err := runa.font_glyph_outline(&font, gid, &o)
+		testing.expectf(t, err == .None, "U+%04X @ wght=600 -> %v (want None)", ch, err)
+		testing.expectf(t, len(o.points) > 0, "U+%04X @ wght=600 has no points", ch)
+	}
+
+	// The deltas must actually apply, not just avoid erroring.
+	bold := runa.Outline{}
+	defer runa.outline_destroy(&bold)
+	testing.expect_value(t, runa.font_glyph_outline(&font, i_gid, &bold), runa.Error.None)
+	testing.expect_value(t, len(bold.points), len(base.points))
+	shifted := false
+	for k in 0..<len(bold.points) {
+		if bold.points[k].x != base.points[k].x || bold.points[k].y != base.points[k].y { shifted = true; break }
+	}
+	testing.expect(t, shifted, "wght=600 must shift at least one point of composite 'i'")
+}

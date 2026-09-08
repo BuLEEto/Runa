@@ -1197,17 +1197,14 @@ font_glyph_outline :: proc(f: ^Font, gid: Glyph_ID, out: ^Outline) -> Error {
 	if f._has_cff {
 		return map_parse_err(parse.cff_glyph_outline(&f._cff, gid, out))
 	}
-	gerr := parse.glyf_outline(&f._glyf, &f._loca, gid, out)
-	if gerr != .None { return map_parse_err(gerr) }
-
-	// Apply gvar deltas if the font is variable AND any axis is off
-	// its default. The default-instance fast-reject saves the gvar
-	// table walk for the common case of static-instance use.
+	// Variable font off its default instance: vary while parsing, so
+	// composite glyphs get their deltas applied to component offsets and
+	// each component is varied on its own (a flattened composite cannot be
+	// varied after the fact — its gvar data has one entry per component).
 	if f._has_gvar && any_axis_non_default(f._axis_values) {
-		verr := parse.apply_glyph_variations(&f._gvar, gid, f._axis_values, out)
-		if verr != .None { return map_parse_err(verr) }
+		return map_parse_err(parse.glyf_outline_var(&f._glyf, &f._loca, &f._gvar, f._axis_values, gid, out))
 	}
-	return .None
+	return map_parse_err(parse.glyf_outline(&f._glyf, &f._loca, gid, out))
 }
 
 @(private)
