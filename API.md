@@ -55,6 +55,10 @@ automatically inside `raster_glyph`.
 ### Layout
 
 ```odin
+// Discretionary GSUB features a caller may switch off per call. Mandatory
+// features (ccmp, locl, rlig) are always applied and not representable here.
+Feature :: enum u8 { Ligatures, Contextual_Ligatures, Contextual_Alternates }
+
 Paragraph_Opts :: struct {
     fonts:     Font_Stack,
     size:      f32,
@@ -62,6 +66,8 @@ Paragraph_Opts :: struct {
     max_width: f32,
     align:     Align,
     language:  parse.Tag,
+    disable_features: bit_set[Feature],   // {} = all applied; feeds layout AND
+                                          // measurement so widths stay consistent
 }
 
 layout_paragraph :: proc(text: string, opts: Paragraph_Opts,

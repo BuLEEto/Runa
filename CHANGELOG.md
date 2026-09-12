@@ -9,6 +9,19 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.0 — 2026-09-12
+
+### Added
+
+- **Per-call OpenType feature control.** `Paragraph_Opts` / `Shape_Run_Opts`
+  gain `disable_features: bit_set[Feature]`, and `shape_text` /
+  `shape_text_cached` a defaulted `disable_features` param. `Feature` covers
+  the discretionary features — `Ligatures` (liga), `Contextual_Ligatures`
+  (clig), `Contextual_Alternates` (calt); the mandatory ccmp/locl/rlig are
+  always applied and can't be switched off. `{}` = unchanged behaviour. Main
+  use is turning ligatures off in a code editor. The set feeds layout and
+  measurement, and the shape cache keys on it, so widths match what's drawn.
+
 ## 1.2.4 — 2026-09-08
 
 ### Fixed

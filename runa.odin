@@ -239,6 +239,9 @@ Line :: struct {
 // first font that covers each codepoint wins.
 Font_Stack :: distinct []^Font
 
+// Feature is a discretionary OpenType feature a caller may switch off per call.
+Feature :: shape.Feature
+
 // Paragraph_Opts is the per-call configuration. See API.md.
 //
 // At v0.1 only `fonts` and `size` are load-bearing. `align`, `direction`,
@@ -251,6 +254,10 @@ Paragraph_Opts :: struct {
 	align:     Align,
 	max_width: f32,                               // 0 -> no wrapping
 	language:  Language,
+	// Discretionary features to switch off; {} = all applied. Set the three
+	// ligature bits to turn ligatures off (e.g. a code editor). Feeds layout
+	// and measurement alike, so widths match what's drawn.
+	disable_features: bit_set[Feature],
 }
 
 // layout_paragraph lays out `text` per `opts`, producing one or more
@@ -362,10 +369,10 @@ layout_paragraph :: proc(text: string, opts: Paragraph_Opts, cache: ^Cache = nil
 		ot_script_tag := opentype_script_tag(run.script)
 		shaped: []Shaped_Glyph
 		if cache != nil {
-			shaped = shape_text_cached(run.font, run_text, opts.size, cache, ot_script_tag)
+			shaped = shape_text_cached(run.font, run_text, opts.size, cache, ot_script_tag, disable_features = opts.disable_features)
 		} else {
 			clear(&tmp_shape)
-			shape_text(run.font, run_text, opts.size, &tmp_shape, ot_script_tag)
+			shape_text(run.font, run_text, opts.size, &tmp_shape, ot_script_tag, disable_features = opts.disable_features)
 			shaped = tmp_shape[:]
 		}
 		for sg in shaped {
@@ -571,7 +578,7 @@ measure_text :: proc(text: string, opts: Paragraph_Opts) -> (width, height: f32)
 		picked := pick_font_for_rune(opts.fonts, r)
 		if picked != cur_font && cur_font != nil {
 			clear(&tmp)
-			shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp)
+			shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp, disable_features = opts.disable_features)
 			for sg in tmp { width += sg.x_advance }
 			run_start = byte_off
 		}
@@ -580,7 +587,7 @@ measure_text :: proc(text: string, opts: Paragraph_Opts) -> (width, height: f32)
 	}
 	if cur_font != nil {
 		clear(&tmp)
-		shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp)
+		shape_text(cur_font, text[run_start:byte_off], opts.size, &tmp, disable_features = opts.disable_features)
 		for sg in tmp { width += sg.x_advance }
 	}
 
@@ -1220,7 +1227,7 @@ any_axis_non_default :: proc(values: []f32) -> bool {
 // At v0.1 the shaper is LTR Latin / Cyrillic / Greek (the script tag
 // passed in defaults to `latn` if zero). Bidi reordering and Arabic
 // shaping land in v0.5.
-shape_text :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_Glyph, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG) {
+shape_text :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_Glyph, script_tag: parse.Tag = parse.LATN_SCRIPT, language_tag: parse.Tag = parse.DFLT_LANG, disable_features: bit_set[Feature] = {}) {
 	inputs := shape.Shape_Inputs{
 		cmap         = &font._cmap,
 		hmtx         = &font._hmtx,
@@ -1230,7 +1237,7 @@ shape_text :: proc(font: ^Font, text: string, size: f32, out: ^[dynamic]Shaped_G
 		axis_values  = font._axis_values,
 		units_per_em = font.units_per_em,
 	}
-	opts := shape.Shape_Run_Opts{script = script_tag, language = language_tag}
+	opts := shape.Shape_Run_Opts{script = script_tag, language = language_tag, disable_features = disable_features}
 	shape.shape_run(&inputs, opts, text, size, out)
 }
 
