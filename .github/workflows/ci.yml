@@ -45,6 +45,8 @@ jobs:
         run: odin test tests/atlas
       - name: Test linebreak
         run: odin test tests/linebreak
+      - name: Test linebreak (Thai dictionary opt-in)
+        run: odin test tests/linebreak -define:RUNA_THAI_DICT=true
       - name: Test bidi
         run: odin test tests/bidi
       - name: Test itemize

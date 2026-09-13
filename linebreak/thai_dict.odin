@@ -30,6 +30,14 @@ import "base:runtime"
 import "core:strings"
 import "core:sync"
 
+// THAI_DICT compiles in the PyThaiNLP word-break dictionary. OFF by default:
+// the CC-BY-SA corpus stays out of the binary and Thai falls back to
+// grapheme-cluster breaks. Enable with `-define:RUNA_THAI_DICT=true` (and then
+// honour the corpus's CC-BY-SA attribution + share-alike).
+THAI_DICT :: #config(RUNA_THAI_DICT, false)
+
+when THAI_DICT {
+
 @(private="file")
 THAI_DICT_DATA :: #load("../tools/ucd/thai_words.txt", string)
 
@@ -55,12 +63,12 @@ Trie_Child :: struct {
 // inside a Thai run. `breaks` must have length `len(text)`; caller
 // composes these opportunities with the standard LB rules.
 thai_segment_breaks :: proc(text: []rune, breaks: []bool) {
-	sync.once_do(&g_thai_once, init_thai_trie)
-	if len(g_thai_nodes) == 0 { return }
-
 	i := 0
 	for i < len(text) {
 		if text[i] >= 0x0E00 && text[i] <= 0x0E7F {
+			// Build the trie lazily — only once Thai actually appears.
+			sync.once_do(&g_thai_once, init_thai_trie)
+			if len(g_thai_nodes) == 0 { return }
 			run_lo := i
 			j := i
 			for j < len(text) && text[j] >= 0x0E00 && text[j] <= 0x0E7F { j += 1 }
@@ -232,4 +240,27 @@ utf8_decode_one :: proc(s: string, off: int) -> (rune, int) {
 		return rune(u32(b0 & 0x07)<<18 | u32(s[off + 1] & 0x3F)<<12 | u32(s[off + 2] & 0x3F)<<6 | u32(s[off + 3] & 0x3F)), 4
 	}
 	return 0xFFFD, 1
+}
+
+} else {
+
+// Grapheme-cluster fallback when the dictionary isn't compiled in: mark a break
+// before each non-combining char of a Thai run, so long Thai still wraps
+// somewhere without the CC-BY-SA corpus. Not word-accurate, but non-crashing.
+thai_segment_breaks :: proc(text: []rune, breaks: []bool) {
+	i := 0
+	for i < len(text) {
+		if text[i] >= 0x0E00 && text[i] <= 0x0E7F {
+			j := i
+			for j < len(text) && text[j] >= 0x0E00 && text[j] <= 0x0E7F { j += 1 }
+			for k in i + 1 ..< j {
+				if !sa_resolves_to_cm(text[k]) { breaks[k] = true }
+			}
+			i = j
+		} else {
+			i += 1
+		}
+	}
+}
+
 }

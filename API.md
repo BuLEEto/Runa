@@ -82,10 +82,9 @@ line_destroy     :: proc(l: ^Line, allocator := context.allocator)
 2. UAX #9 bidi resolve when the text contains any RTL codepoints
 3. shape each run via `shape_text` (GSUB + GPOS, with the Indic /
    Arabic / SEA shaper paths dispatched by script tag)
-4. UAX #14 line-break + width fit; Thai runs are word-broken via
-   the embedded PyThaiNLP dictionary so paragraphs reflow at
-   word boundaries rather than the whole-sentence-as-one-word
-   default
+4. UAX #14 line-break + width fit; Thai runs word-break via the opt-in
+   PyThaiNLP dictionary (`-define:RUNA_THAI_DICT=true`, CC-BY-SA) or, by
+   default, fall back to grapheme-cluster breaks
 5. UAX #9 L2 visual reorder per line
 
 `cache: ^Cache` is optional — pass one to amortize shape work

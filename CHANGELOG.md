@@ -9,6 +9,20 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.3.1 — 2026-09-13
+
+### Changed
+
+- **The Thai word-break dictionary is now opt-in — behaviour change.** It used
+  to compile into every binary and build its trie (~60 MB transient) on the
+  first wrapped paragraph of *any* app, Thai or not, and it embedded the
+  CC-BY-SA PyThaiNLP corpus into every consumer's binary. It's now **off by
+  default**: build `-define:RUNA_THAI_DICT=true` for dictionary word-breaking
+  (and then honour the corpus's CC-BY-SA attribution + share-alike). Without
+  it, Thai falls back to grapheme-cluster breaks — no corpus in the binary, no
+  startup cost. When enabled, the trie now also builds lazily, only once Thai
+  text actually appears.
+
 ## 1.3.0 — 2026-09-12
 
 ### Added
