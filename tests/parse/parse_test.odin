@@ -670,6 +670,38 @@ test_cff2_loads_and_outlines :: proc(t: ^testing.T) {
 	testing.expect(t, out.x_max > out.x_min && out.y_max > out.y_min, "bbox sane")
 }
 
+// Regression: CFF2's operand stack is 513, not Type-2's 48. One `blend`
+// carries a glyph's coordinates AND their per-region deltas, so a variable
+// font with a couple of regions exceeds 48 on ordinary letters — the old
+// 48-slot stack dropped operands and the glyph came back Invalid_Table
+// (silently missing, e.g. Cantarell's i/j/o/O/Q/0/6/9). Every glyph must
+// now produce an outline or a legit empty (space); none may error.
+@(test)
+test_cff2_no_missing_glyphs_from_operand_stack :: proc(t: ^testing.T) {
+	data, ok := load_font(SOURCE_CODE_VF)
+	if !ok {
+		log.info("SourceCodeVF.otf not present; skipping")
+		return
+	}
+	defer delete(data)
+
+	idx, _ := parse.parse_table_index(data)
+	defer parse.table_index_destroy(&idx)
+	cff2_bytes, _ := parse.find_table(&idx, data, parse.tag("CFF2"))
+	cff2, _ := parse.new_cff2(cff2_bytes)
+	defer parse.cff2_destroy(&cff2)
+
+	failures := 0
+	for gid in 0..<cff2.num_glyphs {
+		out: parse.Outline
+		if parse.cff2_glyph_outline(&cff2, parse.Glyph_ID(gid), &out) != .None {
+			failures += 1
+		}
+		parse.outline_destroy(&out)
+	}
+	testing.expect_value(t, failures, 0)   // was 20 with the 48-slot stack
+}
+
 LIBERTINE :: "tests/fonts/LinLibertine-Regular.otf"
 
 @(test)
