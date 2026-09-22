@@ -671,3 +671,33 @@ test_variable_composite_glyph_outline :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, shifted, "wght=600 must shift at least one point of composite 'i'")
 }
+
+@(test)
+test_varied_glyph_bbox_tracks_points :: proc(t: ^testing.T) {
+	// Regression: after gvar deltas move the points, the outline box must be
+	// recomputed, not left at the default-instance header box. Inter grows
+	// rightward with weight, so a stale box clipped heavier glyphs on the right.
+	bytes, ok := load_font_bytes("tests/fonts/InterVariable.ttf")
+	if !ok { return }
+	defer delete(bytes)
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	gid := runa.font_lookup_glyph(&font, '6')
+	base := runa.Outline{}
+	defer runa.outline_destroy(&base)
+	runa.font_glyph_outline(&font, gid, &base)
+
+	werr := runa.font_set_variation(&font, runa.Axis_Tag(0x77676874), 600)
+	testing.expect_value(t, werr, runa.Error.None)
+	bold := runa.Outline{}
+	defer runa.outline_destroy(&bold)
+	testing.expect_value(t, runa.font_glyph_outline(&font, gid, &bold), runa.Error.None)
+
+	// box.x_max must equal the actual rightmost varied point, and must have
+	// grown past the default instance's box (the bug left it at the default).
+	max_px := bold.points[0].x
+	for p in bold.points[1:] { if p.x > max_px { max_px = p.x } }
+	testing.expect_value(t, i32(bold.x_max), max_px)
+	testing.expect(t, bold.x_max > base.x_max, "varied box must grow past the default instance")
+}
