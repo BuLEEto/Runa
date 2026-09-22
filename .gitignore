@@ -29,3 +29,6 @@ Thumbs.db
 
 # Internal design doc — kept locally for reference but not public.
 PROPOSAL.md
+
+# App-agent request / planning notes — kept locally, not public.
+docs/requests/
