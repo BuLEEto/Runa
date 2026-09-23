@@ -153,3 +153,42 @@ test_all_width_paths_agree_under_features :: proc(t: ^testing.T) {
 		testing.expect(t, abs(w_measure - w_layout) < 0.05, "measure vs layout_paragraph width must agree")
 	}
 }
+
+// Regression: a ligature removes glyphs from the MIDDLE of the buffer; the
+// parallel cluster array must lose the same entries, not truncate from the
+// right. Before the fix, every glyph after a ligature named the previous
+// codepoint, so line breaking, caret, and control-byte detection went off by
+// one (a '\n' drawn as a box, the next char dropped).
+@(test)
+test_ligature_keeps_later_clusters :: proc(t: ^testing.T) {
+	bytes, ok := load_font_bytes("tests/fonts/InterVariable.ttf")
+	if !ok { return }
+	defer delete(bytes)
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	// Inter ligates "->", so "a -> b\nc" is 7 glyphs for 8 bytes. With the
+	// ligature at cluster 2 (covering bytes 2-3), every later glyph names its
+	// own byte: clusters 0,1,2,4,5,6,7.
+	text := "a -> b\nc"
+	out := make([dynamic]runa.Shaped_Glyph, 0, 16)
+	defer delete(out)
+	runa.shape_text(&font, text, 16, &out)
+
+	want := []u32{0, 1, 2, 4, 5, 6, 7}
+	testing.expect_value(t, len(out), len(want))
+	for g, i in out {
+		if i < len(want) {
+			testing.expectf(t, g.cluster == want[i], "glyph %d cluster %d, want %d", i, g.cluster, want[i])
+		}
+	}
+
+	// Non-decreasing, and every glyph's cluster names a real byte.
+	prev := -1
+	for g in out {
+		c := int(g.cluster)
+		testing.expect(t, c >= prev, "clusters must be non-decreasing")
+		testing.expect(t, c >= 0 && c < len(text), "cluster must name a valid byte")
+		prev = c
+	}
+}
