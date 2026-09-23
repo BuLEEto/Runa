@@ -3,6 +3,7 @@
 package runa_test
 
 import "core:testing"
+import "core:unicode/utf8"
 import runa "../../"
 
 @(private="file")
@@ -190,5 +191,62 @@ test_ligature_keeps_later_clusters :: proc(t: ^testing.T) {
 		testing.expect(t, c >= prev, "clusters must be non-decreasing")
 		testing.expect(t, c >= 0 && c < len(text), "cluster must name a valid byte")
 		prev = c
+	}
+}
+
+// expect_cluster_invariants asserts the two properties a *uniform* cluster
+// shift cannot hide from (which is why the 003 bug survived tests that read
+// text back through the clusters): the last glyph must name the last
+// codepoint, and every newline must be claimed by the glyph shaped from it.
+@(private="file")
+last_codepoint_start :: proc(s: string) -> int {
+	i, last := 0, 0
+	for i < len(s) {
+		_, sz := utf8.decode_rune_in_string(s[i:])
+		last = i
+		i += sz
+	}
+	return last
+}
+
+@(private="file")
+expect_cluster_invariants :: proc(t: ^testing.T, font: ^runa.Font, text: string) {
+	out := make([dynamic]runa.Shaped_Glyph, 0, 16, context.temp_allocator)
+	runa.shape_text(font, text, 16, &out)
+	testing.expectf(t, len(out) > 0, "no glyphs for %q", text)
+
+	prev := -1
+	for g in out {
+		c := int(g.cluster)
+		testing.expectf(t, c >= prev, "clusters must be non-decreasing in %q", text)
+		testing.expectf(t, c >= 0 && c < len(text), "cluster out of range in %q", text)
+		prev = c
+	}
+	testing.expectf(t, int(out[len(out)-1].cluster) == last_codepoint_start(text),
+		"last glyph must name the last codepoint in %q", text)
+	for b, i in transmute([]u8)text {
+		if b != '\n' { continue }
+		claimed := false
+		for g in out { if int(g.cluster) == i { claimed = true; break } }
+		testing.expectf(t, claimed, "newline at byte %d unclaimed in %q", i, text)
+	}
+}
+
+// Cross-font: Inter forms arrows via a nested type-6 -> type-4 route; Roboto's
+// "fi" is a direct type-4 ligature — a different GSUB path. Both must keep
+// clusters exact through the invariants above (Roboto is in CI's font fetch).
+@(test)
+test_ligature_clusters_cross_font :: proc(t: ^testing.T) {
+	if b, ok := load_font_bytes("tests/fonts/InterVariable.ttf"); ok {
+		defer delete(b)
+		f, _ := runa.font_load(b); defer runa.font_destroy(&f)
+		expect_cluster_invariants(t, &f, "a -> b\nc")
+		expect_cluster_invariants(t, &f, "x -> y -> z end")
+	}
+	if b, ok := load_font_bytes("tests/fonts/Roboto-Regular.ttf"); ok {
+		defer delete(b)
+		f, _ := runa.font_load(b); defer runa.font_destroy(&f)
+		expect_cluster_invariants(t, &f, "office\nz")
+		expect_cluster_invariants(t, &f, "difficult end")
 	}
 }
