@@ -301,3 +301,47 @@ test_default_ignorables_do_not_paint :: proc(t: ^testing.T) {
 		testing.expect(t, out[2].glyph_id != 100, "letter after an ignorable must still join")
 	}
 }
+
+// A default-ignorable in a font with no space glyph must be dropped, not
+// mapped to .notdef. The zero-advance-space trick above degrades to gid 0
+// (a visible box) on emoji fonts, which ship no ' ' glyph: ❤️ is
+// U+2764 U+FE0F and the variation selector routes to the emoji font, so
+// people saw an emoji followed by a box. Drop it — HarfBuzz's
+// REMOVE_DEFAULT_IGNORABLES — keeping the surviving glyphs' clusters.
+@(test)
+test_default_ignorable_dropped_when_no_space_glyph :: proc(t: ^testing.T) {
+	bytes, err := os.read_entire_file_from_path("tests/fonts/Twemoji-Mozilla.ttf", context.allocator)
+	if err != nil { log.info("Twemoji-Mozilla.ttf not present; skipping"); return }
+	defer delete(bytes)
+
+	f, ferr := runa.font_load(bytes)
+	if ferr != .None { log.info("font_load failed; skipping"); return }
+	defer runa.font_destroy(&f)
+
+	// Preconditions that make this the exact bug path: no space glyph, but
+	// the font *does* cover U+FE0F, so the old code overrode a real glyph
+	// with .notdef.
+	testing.expect_value(t, runa.font_lookup_glyph(&f, ' '), u16(0))
+	heart := runa.font_lookup_glyph(&f, rune(0x2764))
+	testing.expect(t, heart != 0, "Twemoji should cover U+2764")
+	testing.expect(t, runa.font_lookup_glyph(&f, rune(0xFE0F)) != 0, "Twemoji should cover U+FE0F")
+
+	inputs := shape.Shape_Inputs{
+		cmap = &f._cmap, hmtx = &f._hmtx,
+		gsub = f._has_gsub ? &f._gsub : nil,
+		gpos = f._has_gpos ? &f._gpos : nil,
+		units_per_em = f.units_per_em,
+	}
+	opts := shape.Shape_Run_Opts{language = parse.DFLT_LANG}
+	out := make([dynamic]shape.Shaped_Glyph, 0, 8)
+	defer delete(out)
+	shape.shape_run(&inputs, opts, "❤️", f32(f.units_per_em), &out)
+
+	// The selector is dropped: just the heart, and never a .notdef box.
+	testing.expect_value(t, len(out), 1)
+	testing.expect_value(t, out[0].glyph_id, heart)
+	for g in out {
+		testing.expect(t, g.glyph_id != 0, "no glyph may be .notdef")
+		testing.expect(t, int(g.cluster) < len("❤️"), "cluster names a real byte")
+	}
+}
