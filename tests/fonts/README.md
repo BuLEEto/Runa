@@ -21,6 +21,11 @@ file would require.
 | `NotoColorEmoji.ttf` | https://github.com/googlefonts/noto-emoji/releases | OFL-1.1 |
 | `NotoColorEmoji-COLRv1.ttf` | https://github.com/googlefonts/noto-emoji/releases (COLRv1 build) | OFL-1.1 |
 | `Twemoji-Mozilla.ttf` | https://github.com/mozilla/twemoji-colr/releases | Apache-2.0 + CC-BY-4.0 |
+| `NotoSansCJK.ttc` | https://github.com/notofonts/noto-cjk/releases (Sans) | OFL-1.1 |
+
+`NotoSansCJK.ttc` is a TrueType Collection of CID-keyed CFF1 faces — it
+exercises both `font_load_face` (collection face selection) and the
+CFF1 FDArray/FDSelect outline path.
 
 ## CI
 

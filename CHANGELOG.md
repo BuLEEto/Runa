@@ -9,6 +9,19 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.4.0 — 2026-10-12
+
+### Added
+
+- **CID-keyed CFF1 fonts now render.** A CID font (Top DICT with ROS) takes each
+  glyph's local subrs from an FDArray chosen per-glyph by FDSelect, not from one
+  top-level Private DICT — so every glyph that called a local subr previously
+  came out blank. This is most of Noto Sans CJK / Source Han: CJK rendered with
+  holes. The FDArray/FDSelect path CFF2 already had is now shared with CFF1.
+- **`font_load_face(data, index)`** loads one face from a TTC (TrueType
+  Collection); `font_num_faces` reports the count. `font_load` still rejects a
+  `.ttc`. CJK commonly ships as collections, which this unblocks.
+
 ## 1.3.5 — 2026-09-26
 
 ### Fixed

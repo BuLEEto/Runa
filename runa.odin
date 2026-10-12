@@ -700,20 +700,47 @@ utf8_byte_len :: proc(r: rune) -> int {
 	return 4
 }
 
-// font_load parses the SFNT directory and every required table out of
-// `data`. The caller retains ownership of `data` — it must outlive the
-// returned Font. On error, no allocations are leaked.
-//
-// Required tables at v0.1: `head`, `maxp`, `cmap`, `hhea`, `hmtx`,
-// `loca`, `glyf`. A font missing any of these returns
-// `Error.Table_Not_Found`. Fonts shipping only CFF (`OTTO` SFNT) are
-// rejected with `Error.Unsupported_Format` for now — CFF outlines land
-// in a follow-up commit.
+// font_load parses a single-font SFNT. The caller retains ownership of
+// `data` — it must outlive the returned Font. On error, no allocations
+// are leaked. A TTC (TrueType Collection) is rejected with
+// `Error.Unsupported_Format`; use `font_load_face` to choose a face.
 font_load :: proc(data: []u8, allocator := context.allocator) -> (f: Font, err: Error) {
+	if parse.is_ttc(data) {
+		err = .Unsupported_Format
+		return
+	}
+	return font_load_at(data, 0, allocator)
+}
+
+// font_load_face loads face `index` from a TTC (TrueType Collection).
+// For a plain single-font SFNT, `index` must be 0 and it behaves like
+// `font_load`. Faces in a collection share table data, so the returned
+// Font aliases `data` just as `font_load` does — `data` must outlive it.
+// `font_num_faces` reports how many faces a file has.
+font_load_face :: proc(data: []u8, index: int, allocator := context.allocator) -> (f: Font, err: Error) {
+	base, berr := parse.ttc_face_offset(data, index)
+	if berr != .None {
+		err = map_parse_err(berr)
+		return
+	}
+	return font_load_at(data, base, allocator)
+}
+
+// font_num_faces returns the number of faces in `data`: the face count
+// of a TTC, or 1 for a plain single-font SFNT.
+font_num_faces :: proc(data: []u8) -> int {
+	return parse.ttc_num_faces(data)
+}
+
+// font_load_at parses the SFNT directory at byte `dir_offset` within
+// `data` and every required table. `dir_offset` is 0 for a plain font
+// or a TTC face's directory offset. On error, no allocations are leaked.
+@(private)
+font_load_at :: proc(data: []u8, dir_offset: u32, allocator := context.allocator) -> (f: Font, err: Error) {
 	f._data = data
 	f._allocator = allocator
 
-	tables, terr := parse.parse_table_index(data, allocator)
+	tables, terr := parse.parse_table_index_at(data, dir_offset, allocator)
 	if terr != .None {
 		err = map_parse_err(terr)
 		return
