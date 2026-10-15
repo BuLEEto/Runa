@@ -9,6 +9,46 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.5.0 — 2026-10-15
+
+### Added
+
+- **Total-fit line breaking (Knuth–Plass).** `break_lines` chooses every break
+  in a paragraph together to even the lines, over a box/glue/penalty item stream
+  the caller measures (each word shaped once, its advances summed). Handles
+  per-line widths (first-line indent, drop-cap lines, hanging markers), a
+  tolerance and line/flagged/fitness demerits, caps on consecutive and last-line
+  hyphens, a ragged-right mode, and soft-hyphen breaks drawn only where broken.
+  Falls back to a greedy fit (`break_greedy`) when no total-fit solution exists.
+  A chapter (~500 paragraphs) reflows in single-digit ms. `break_text` is the
+  single-font convenience (break opportunities from runa's UAX #14 engine, so it
+  wraps every script incl. CJK/Thai); multi-style callers call `break_lines`.
+- **Turn OpenType features on (and off) by tag.** `Paragraph_Opts.features` (and
+  a `features` argument on `shape_text` / `shape_text_cached`) take a HarfBuzz-
+  style `[]Feature_Setting` — a tag plus an on/off value — so a caller can enable
+  `smcp`, `c2sc`, `onum`, `dlig`, `case`, a stylistic set, or turn `kern` off for
+  letter-spaced runs. Build one with `feature("smcp")` / `feature("kern", false)`;
+  `NO_LIGATURES` is the ready-made ligatures-off set. Known tags apply in canonical
+  order, any other after. An unknown tag is a silent no-op, as in HarfBuzz.
+- **`font_has_feature(font, "smcp", …)`** reports whether a font actually carries a
+  GSUB feature, so a caller can fake small capitals where it doesn't.
+
+### Fixed
+
+- **Extension lookups (GSUB type 7, GPOS type 9) now execute.** A font wraps its
+  lookups this way once the layout tables outgrow 16-bit offsets, which is common
+  — so most real kerning and many features were silently skipped. Inter keeps its
+  main kerning behind an extension lookup, for one: `AVA`, `To`, `Yo` now kern.
+  Each extension subtable is resolved to its real type and dispatched through the
+  normal path.
+
+### Deprecated
+
+- **`disable_features`** (the `bit_set[Feature]`) in favour of `features`, which
+  reaches any tag, not just the three ligature ones. It still works and is folded
+  into the same resolution (a `features` entry for the same tag wins); prefer
+  `features` with `NO_LIGATURES`.
+
 ## 1.4.0 — 2026-10-12
 
 ### Added
