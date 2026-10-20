@@ -109,6 +109,24 @@ test_features_override_disable_features :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(out), 1)                // ligated: the list wins
 }
 
+// NO_LIGATURES must be sliceable — `runa.NO_LIGATURES[:]` has to compile
+// (it's @(rodata), not a constant) and actually turn ligatures off.
+@(test)
+test_no_ligatures_slice :: proc(t: ^testing.T) {
+	bytes, ok := load_font_bytes(INTER)
+	if !ok { return }
+	defer delete(bytes)
+	font, _ := runa.font_load(bytes)
+	defer runa.font_destroy(&font)
+
+	on  := make([dynamic]runa.Shaped_Glyph, context.temp_allocator)
+	off := make([dynamic]runa.Shaped_Glyph, context.temp_allocator)
+	runa.shape_text(&font, "->", 16, &on)
+	runa.shape_text(&font, "->", 16, &off, features = runa.NO_LIGATURES[:])   // must compile
+	testing.expect_value(t, len(on), 1)    // Inter ligates the arrow via calt
+	testing.expect_value(t, len(off), 2)   // NO_LIGATURES splits it
+}
+
 // The `features` list is part of the shape cache key: a `zero` shaping and a
 // plain shaping of the same (font, size, text) must not collide.
 @(test)

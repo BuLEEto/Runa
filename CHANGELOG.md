@@ -9,6 +9,24 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.5.1 — 2026-10-20
+
+### Fixed
+
+- **`NO_LIGATURES` can now be sliced.** It was a constant array, so the
+  documented `features = runa.NO_LIGATURES[:]` didn't compile (a constant has no
+  address). It's now `@(rodata)`.
+
+### Changed
+
+- **`final_hyphen_demerits` defaults to `1e6`** (was 5000). Against runa's
+  demerit scale a loose line's own demerits dwarf 5000, so the old default let a
+  last-full-line hyphen through. It's a strong nudge, not a prohibition — a
+  catastrophically loose alternative can still outweigh it. Also documented the
+  demerit-field convention (0 → default, negative disables).
+- **API.md documents the 1.5.0 line-breaking + features-by-tag API** and drops
+  Knuth–Plass from "Known gaps" (it shipped in 1.5.0).
+
 ## 1.5.0 — 2026-10-15
 
 ### Added

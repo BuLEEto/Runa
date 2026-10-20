@@ -40,12 +40,16 @@ penalty :: proc(p: f32, width: f32 = 0, flagged := false) -> Item { return {kind
 
 // Break_Params tunes the optimisation. Zero values get sensible defaults
 // (see `break_defaults`), so `{}` is a reasonable justified setting.
+// For the four demerit fields a zero means "use the default" and a negative
+// means "disable" (so {} is a sensible justified setting, and a demerit can
+// still be switched off deliberately). They are strong nudges, not absolute
+// rules — a catastrophically bad alternative can still outweigh one.
 Break_Params :: struct {
 	tolerance:       f32,  // max |adjustment ratio| a line may have (looser = more candidates). <=0 → 2
-	line_penalty:    f32,  // demerits added per line, discouraging extra lines. <0 → 10
-	flagged_demerits: f32, // extra demerits when two lines in a row end at a flagged (hyphen) break. <0 → 3000
-	fitness_demerits: f32, // extra demerits when adjacent lines differ by >1 fitness class. <0 → 3000
-	final_hyphen_demerits: f32, // extra demerits for hyphenating the last full line. <0 → 5000, 0 disables
+	line_penalty:    f32,  // demerits added per line, discouraging extra lines. 0 → 10, <0 off
+	flagged_demerits: f32, // demerits when two lines in a row end at a flagged (hyphen) break. 0 → 3000, <0 off
+	fitness_demerits: f32, // demerits when adjacent lines differ by >1 fitness class. 0 → 3000, <0 off
+	final_hyphen_demerits: f32, // demerits for hyphenating the last full line. 0 → 1e6, <0 off (5000 is too weak to matter)
 	max_consecutive_hyphens: int, // hard cap on hyphenated lines in a row (0 → no cap)
 	ragged:          bool, // ragged-right: even the lines by cost but don't spread them (ratio reported 0)
 }
@@ -73,7 +77,7 @@ break_defaults :: proc(p: Break_Params) -> Break_Params {
 	r.line_penalty          = demerit(r.line_penalty, 10)
 	r.flagged_demerits      = demerit(r.flagged_demerits, 3000)
 	r.fitness_demerits      = demerit(r.fitness_demerits, 3000)
-	r.final_hyphen_demerits = demerit(r.final_hyphen_demerits, 5000)
+	r.final_hyphen_demerits = demerit(r.final_hyphen_demerits, 1e6)
 	return r
 }
 

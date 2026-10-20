@@ -257,8 +257,10 @@ feature :: proc(name: string, on := true) -> Feature_Setting {
 }
 
 // NO_LIGATURES is the common "turn ligatures off" set (code editors), as
-// `features`. Pass it sliced: `features = runa.NO_LIGATURES[:]`.
-NO_LIGATURES :: [3]Feature_Setting{
+// `features`. Pass it sliced: `features = runa.NO_LIGATURES[:]`. Read-only
+// data (not a constant) so it has an address to slice.
+@(rodata)
+NO_LIGATURES := [3]Feature_Setting{
 	{parse.FEAT_LIGA, 0}, {parse.FEAT_CLIG, 0}, {parse.FEAT_CALT, 0},
 }
 
