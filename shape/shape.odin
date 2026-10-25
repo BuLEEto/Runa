@@ -137,6 +137,22 @@ is_default_ignorable :: proc(r: rune) -> bool {
 	return false
 }
 
+// is_hard_break_control reports a mandatory line/paragraph-break control
+// (UAX #14 BK, plus CR / LF / NEL). No font has a glyph for these, so the
+// cmap maps them to .notdef — and many fonts ship a *drawable* .notdef box
+// (SF Compact, Roboto, Inter, …), which paints a visible box at every hard
+// break. They drive line breaking but must never paint, so they are blanked
+// exactly like a default-ignorable: kept in the cluster stream as a
+// zero-advance space, never drawn.
+@(private)
+is_hard_break_control :: proc(r: rune) -> bool {
+	switch r {
+	case 0x000A, 0x000B, 0x000C, 0x000D, 0x0085, 0x2028, 0x2029:
+		return true
+	}
+	return false
+}
+
 // shape_run shapes `text` for one font at `size` pixels, appending to
 // `out`. Existing entries in `out` are kept — the caller can reuse the
 // dynamic array across calls. Allocations made during shaping land in
@@ -163,7 +179,7 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 		append(&gids, gid)
 		append(&clusters, byte_idx)
 		append(&runes, r)
-		append(&ignorable, is_default_ignorable(r))
+		append(&ignorable, is_default_ignorable(r) || is_hard_break_control(r))
 
 		// Advance byte index by the UTF-8 length of the codepoint we
 		// just consumed.
@@ -284,8 +300,9 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 		if i < len(clusters) { cluster = clusters[i] }
 
 		// Default-ignorables (LRM / RLM / ALM, ZWJ / ZWNJ, variation
-		// selectors) have already done their job in the joining and bidi
-		// passes and must not paint. Emit the font's space glyph at zero
+		// selectors) and hard line-break controls (LF / CR / NEL / LS / PS)
+		// have done their job in the joining / bidi / line-break passes and
+		// must not paint. Emit the font's space glyph at zero
 		// advance where it has one (HarfBuzz's default — keeps the glyph
 		// and its cluster in the run). Where the font ships no space glyph
 		// — many emoji fonts don't, and a variation selector routes to the

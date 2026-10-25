@@ -9,6 +9,18 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## Unreleased
+
+### Fixed
+
+- **Hard line-break controls no longer draw a `.notdef` box.** LF / CR / NEL /
+  LS / PS (and VT / FF) have no glyph, so the cmap maps them to .notdef — and
+  many fonts ship a *drawable* .notdef box (SF Compact, Roboto, Inter …), so a
+  renderer painted a visible box at every hard break. They're now blanked like a
+  default-ignorable: kept in the cluster stream as a zero-advance space, never
+  drawn. Line breaking and source clusters are unchanged. Reported by
+  @samanshaiza004 (#1).
+
 ## 1.5.1 — 2026-10-20
 
 ### Fixed
