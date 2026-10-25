@@ -127,11 +127,12 @@ remaining :: proc(r: ^Reader) -> int {
 	return len(r.data) - r.pos
 }
 
-// tag converts a 4-character ASCII string to a Tag. Used at compile time
-// for table tag constants — e.g. `tag("head")`. Panics if the string is
-// not exactly four bytes; this is intentional, because table tags are
-// always literal in source code.
-tag :: proc(s: string) -> Tag {
-	assert(len(s) == 4, "OpenType tag must be exactly 4 bytes")
+// tag converts a 4-character ASCII string to a Tag — e.g. `tag("head")`.
+// A string that isn't exactly four bytes returns Tag(0); tags are always
+// 4-byte literals in source, and a zero tag is a harmless no-op in feature
+// lookup. Contextless so it (and `feature`) can be used at global scope,
+// e.g. in a package-level `@(rodata)` feature list.
+tag :: proc "contextless" (s: string) -> Tag {
+	if len(s) != 4 { return Tag(0) }
 	return Tag(u32(s[0])<<24 | u32(s[1])<<16 | u32(s[2])<<8 | u32(s[3]))
 }

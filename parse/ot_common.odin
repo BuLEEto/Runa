@@ -25,6 +25,9 @@ FEAT_CASE :: Tag(0x63617365)              // 'case'
 FEAT_SMCP :: Tag(0x736D6370)              // 'smcp' — small capitals
 FEAT_C2SC :: Tag(0x63327363)              // 'c2sc' — capitals to small capitals
 FEAT_ONUM :: Tag(0x6F6E756D)              // 'onum' — oldstyle figures
+FEAT_TNUM :: Tag(0x746E756D)              // 'tnum' — tabular figures
+FEAT_PNUM :: Tag(0x706E756D)              // 'pnum' — proportional figures
+FEAT_LNUM :: Tag(0x6C6E756D)              // 'lnum' — lining figures
 FEAT_LIGA :: Tag(0x6C696761)              // 'liga'
 FEAT_CLIG :: Tag(0x636C6967)              // 'clig'
 FEAT_DLIG :: Tag(0x646C6967)              // 'dlig' — discretionary ligatures

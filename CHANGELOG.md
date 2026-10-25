@@ -9,6 +9,19 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## 1.5.3 — 2026-10-25
+
+### Added
+
+- **`FEAT_TNUM` / `FEAT_PNUM` / `FEAT_LNUM`** figure-feature tag constants, beside
+  `FEAT_ONUM`.
+
+### Changed
+
+- **`parse.tag` and `feature` are now `contextless`**, so `feature(...)` works at
+  global scope (e.g. a package-level feature list). A non-4-byte tag returns
+  `Tag(0)` rather than asserting.
+
 ## 1.5.2 — 2026-10-25
 
 ### Fixed

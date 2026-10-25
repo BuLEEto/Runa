@@ -11,6 +11,18 @@ import runa "../../"
 @(private="file")
 INTER :: "tests/fonts/InterVariable.ttf"
 
+// Regression: feature() must be usable at global scope (contextless), so a
+// caller can build its own package-level feature list. This line failing to
+// compile is the bug (parse.tag's assert needed a context).
+@(private="file")
+TABULAR := [1]runa.Feature_Setting{runa.feature("tnum")}
+
+@(test)
+test_feature_at_global_scope :: proc(t: ^testing.T) {
+	testing.expect_value(t, TABULAR[0].tag, runa.feature("tnum").tag)
+	testing.expect(t, TABULAR[0].value != 0, "tnum on")
+}
+
 @(private="file")
 glyph_ids :: proc(font: ^runa.Font, text: string, feats: []runa.Feature_Setting) -> (ids: [dynamic]u32, advance: f32) {
 	out := make([dynamic]runa.Shaped_Glyph, 0, 16, context.temp_allocator)
