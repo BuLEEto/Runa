@@ -251,8 +251,10 @@ Feature_Setting :: shape.Feature_Setting
 
 // feature builds a Feature_Setting from a 4-character tag name. `on`
 // chooses the value: 1 (on) or 0 (off). A tag the shaper doesn't apply
-// is a silent no-op, exactly as in HarfBuzz. Contextless, so it can be
-// used at global scope (e.g. a package-level `@(rodata)` feature list).
+// is a silent no-op, exactly as in HarfBuzz — and so is a mistyped or
+// non-4-character name (it yields Tag(0), which shapes nothing), so check
+// the spelling. Contextless, so it can be used at global scope (e.g. a
+// package-level feature list).
 feature :: proc "contextless" (name: string, on := true) -> Feature_Setting {
 	return Feature_Setting{tag = parse.tag(name), value = on ? 1 : 0}
 }
