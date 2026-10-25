@@ -9,7 +9,7 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
-## Unreleased
+## 1.5.2 — 2026-10-25
 
 ### Fixed
 
