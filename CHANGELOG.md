@@ -20,6 +20,11 @@ new optional features) live under `### Added` / `### Changed`.
   default-ignorable: kept in the cluster stream as a zero-advance space, never
   drawn. Line breaking and source clusters are unchanged. Reported by
   @samanshaiza004 (#1).
+- **Other non-printing controls no longer box either.** A TAB the font leaves
+  unmapped now renders as a space (a font's own tab glyph is respected; true
+  tab-stop expansion stays the caller's job); the C0 / C1 / DEL controls (NUL,
+  BEL, …) are blanked to a zero-advance space. Genuinely missing *printable*
+  glyphs are still .notdef — that box is the correct "missing glyph" signal.
 
 ## 1.5.1 — 2026-10-20
 

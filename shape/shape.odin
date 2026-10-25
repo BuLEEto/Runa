@@ -153,6 +153,23 @@ is_hard_break_control :: proc(r: rune) -> bool {
 	return false
 }
 
+// is_nonprinting_control reports a C0 / C1 / DEL control that has no display
+// form — NUL, BEL, backspace, the device controls, DEL, and the C1 block —
+// other than TAB (handled as a space) and the hard line-break controls above.
+// Like those, the cmap maps them to a (possibly drawable) .notdef, so they are
+// blanked to a zero-advance space: present in the cluster stream, never drawn.
+// Genuinely missing *printable* glyphs are left as .notdef on purpose — that
+// box is the correct "this glyph is missing" signal.
+@(private)
+is_nonprinting_control :: proc(r: rune) -> bool {
+	switch r {
+	case 0x0000..=0x0008, 0x000E..=0x001F, 0x007F,
+	     0x0080..=0x0084, 0x0086..=0x009F:
+		return true
+	}
+	return false
+}
+
 // shape_run shapes `text` for one font at `size` pixels, appending to
 // `out`. Existing entries in `out` are kept — the caller can reuse the
 // dynamic array across calls. Allocations made during shaping land in
@@ -176,10 +193,17 @@ shape_run :: proc(in_: ^Shape_Inputs, opts: Shape_Run_Opts, text: string, size: 
 	byte_idx: u32 = 0
 	for r in text {
 		gid := parse.cmap_lookup(in_.cmap, r)
+		// A tab the font doesn't map (cmap → .notdef) is whitespace, not a
+		// break: render it as the font's space (one space wide) rather than a
+		// box. A font that maps tab to its own glyph keeps it. True tab-stop
+		// expansion is the caller's job, before shaping.
+		if r == '\t' && gid == 0 {
+			if sp := parse.cmap_lookup(in_.cmap, ' '); sp != 0 { gid = sp }
+		}
 		append(&gids, gid)
 		append(&clusters, byte_idx)
 		append(&runes, r)
-		append(&ignorable, is_default_ignorable(r) || is_hard_break_control(r))
+		append(&ignorable, is_default_ignorable(r) || is_hard_break_control(r) || is_nonprinting_control(r))
 
 		// Advance byte index by the UTF-8 length of the codepoint we
 		// just consumed.
