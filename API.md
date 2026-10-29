@@ -248,6 +248,62 @@ sweep gradients + the 28 W3C composite blend modes) is preferred
 over the v0 flat-fill path when the font carries a v1
 BaseGlyphList.
 
+### Atlas upload acknowledgement
+
+```odin
+Atlas_Dirty_Snapshot :: struct {
+    page_index: u16,       // page in pages_alpha or pages_color
+    is_color: bool,       // selects pages_color when true
+    x, y, w, h: u16,      // dirty rectangle in page pixels
+    generation: u64,      // page write generation
+}
+
+atlas_dirty_snapshot :: proc(a: ^Atlas, allocator := context.allocator) -> []Atlas_Dirty_Snapshot
+atlas_dirty_ack      :: proc(a: ^Atlas, snapshot: []Atlas_Dirty_Snapshot)
+```
+
+Use snapshot/acknowledgement when upload preparation or submission can fail or
+be deferred. Snapshotting does not clear pending writes. Each page advances its
+generation whenever a bitmap is packed, even if its dirty bounding rectangle
+does not grow. Acknowledgement clears only the matching page generation and
+rectangle. If a later write exists, the whole accumulated dirty region remains
+pending; conservative re-upload is intentional. Acknowledge only the subset of
+entries actually submitted. Repeated or mismatched acknowledgements do nothing.
+`atlas_flush_dirty` retains its existing destructive behavior for current users.
+
+The returned snapshot is an exact-length, caller-owned metadata slice. Free it
+with `delete(snapshot, allocator)` using the same allocator passed to the call.
+A clean atlas returns nil without allocating. Acknowledgement borrows the slice
+for the call without retaining or freeing it. Entries are valid only for the
+original live Atlas instance; discard them when destroying or recreating it.
+
+Snapshots do not copy pixels. Read the selected page's atlas-owned `pixels`
+slice using its full-page row stride (`width` bytes for Alpha8, `width * 4` for
+RGBA8). This `[]u8` storage is read-only by convention for consumers; packing
+can change it. Serialize atlas operations and copy the needed pixels into
+upload storage before allowing further writes. The API provides no thread
+synchronization or independent dirty tracking for multiple GPU consumers.
+
+For example, pack glyph A, capture its dirty snapshot and stage the pixels,
+then pack glyph B on the same page. After submitting the earlier staged upload,
+acknowledge its snapshot. B's write remains dirty, including when it falls
+inside the previous dirty rectangle.
+
+```odin
+snapshot := runa.atlas_dirty_snapshot(&atlas, allocator)
+defer delete(snapshot, allocator)
+
+// Stage the snapshot's pixels into renderer-owned upload storage.
+// After successful submission:
+runa.atlas_dirty_ack(&atlas, snapshot)
+// If staging or submission fails, skip acknowledgement and take a fresh
+// snapshot on the next attempt; dirty state remains pending.
+```
+
+Acknowledgement records successful upload submission with safely retained
+source storage, not GPU completion. The renderer owns staging lifetimes, GPU
+synchronization, device-loss recovery, and any per-consumer upload tracking.
+
 ## Packages
 
 | Package | Purpose |

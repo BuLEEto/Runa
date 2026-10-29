@@ -29,12 +29,15 @@ Atlas_Slot   :: raster.Atlas_Slot
 Atlas_Format :: raster.Atlas_Format
 Atlas_Dirty  :: raster.Atlas_Dirty
 Atlas_Error  :: raster.Atlas_Error
+Atlas_Dirty_Snapshot :: raster.Atlas_Dirty_Snapshot
 
 atlas_make        :: raster.atlas_make
 atlas_destroy     :: raster.atlas_destroy
 atlas_pack_alpha  :: raster.atlas_pack_alpha
 atlas_pack_rgba   :: raster.atlas_pack_rgba
 atlas_flush_dirty :: raster.atlas_flush_dirty
+atlas_dirty_snapshot :: raster.atlas_dirty_snapshot
+atlas_dirty_ack      :: raster.atlas_dirty_ack
 
 // ---- UAX #29 segmentation iterators (re-exported from itemize) -------
 //
