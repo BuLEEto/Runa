@@ -9,6 +9,17 @@ must be flagged in a `### Breaking changes` section per release.
 Source-compatible additions (new procs, new defaulted parameters,
 new optional features) live under `### Added` / `### Changed`.
 
+## Unreleased
+
+### Added
+
+- **Retry-safe atlas dirty snapshots.** `atlas_dirty_snapshot` returns pending
+  page rectangles and write generations without clearing them. `atlas_dirty_ack`
+  conditionally clears the entries submitted by a renderer, preserving writes
+  made after the snapshot even when the dirty rectangle is unchanged. Snapshot
+  metadata uses the caller's allocator; pixel storage stays atlas-owned. The
+  existing `atlas_flush_dirty` API and behavior are unchanged. (#2)
+
 ## 1.5.3 — 2026-10-25
 
 ### Added

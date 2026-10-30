@@ -44,6 +44,7 @@ Atlas_Page :: struct {
 	dirty_min:  [2]u16,
 	dirty_max:  [2]u16,
 	is_dirty:   bool,
+	dirty_generation: u64, // Advances on each pack write, including unchanged dirty bounds.
 }
 
 @(private)
@@ -218,6 +219,7 @@ page_copy_into :: proc(p: ^Atlas_Page, src: []u8, w, h, x, y: u16) {
 
 @(private)
 mark_dirty :: proc(p: ^Atlas_Page, x, y, w, h: u16) {
+	p.dirty_generation += 1
 	x1 := x + w
 	y1 := y + h
 	if !p.is_dirty {
@@ -257,6 +259,88 @@ Atlas_Dirty :: struct {
 	is_color:   bool,
 	x, y:       u16,
 	w, h:       u16,
+}
+
+// Atlas_Dirty_Snapshot describes one page's pending rectangle and write
+// generation. It owns no pixels. Treat records as opaque acknowledgement
+// tokens for the original Atlas lifetime; discard them on destroy/recreate.
+// Page indices address the alpha or colour list selected by is_color.
+Atlas_Dirty_Snapshot :: struct {
+	page_index: u16, // Index in the selected page list.
+	is_color:   bool, // true selects pages_color; false selects pages_alpha.
+	x, y:       u16, // Dirty rectangle origin in page pixels.
+	w, h:       u16, // Dirty rectangle dimensions in page pixels.
+	generation: u64, // Page write generation captured with the rectangle.
+}
+
+// atlas_dirty_snapshot returns pending dirty regions without clearing them.
+// Use it instead of atlas_flush_dirty when an upload can fail or be deferred.
+// The caller owns the exact-length metadata slice: delete it with the same
+// allocator. A clean atlas returns nil without allocating. Pixels remain
+// live atlas-owned storage; this operation does not copy or freeze them.
+// Serialize atlas access and stage pixels before allowing further writes.
+// After successful submission, pass the uploaded entries to atlas_dirty_ack;
+// on failure, leave them unacknowledged and take a fresh snapshot to retry.
+// Example:
+//   pending := atlas_dirty_snapshot(a, allocator)
+//   defer delete(pending, allocator)
+//   // Stage and successfully submit pending regions here.
+//   atlas_dirty_ack(a, pending)
+atlas_dirty_snapshot :: proc(a: ^Atlas, allocator := context.allocator) -> []Atlas_Dirty_Snapshot {
+	count := 0
+	for &p in a.pages_alpha { if p.is_dirty { count += 1 } }
+	for &p in a.pages_color { if p.is_dirty { count += 1 } }
+	if count == 0 { return nil }
+
+	out := make([]Atlas_Dirty_Snapshot, count, allocator)
+	index := 0
+	for &p, i in a.pages_alpha {
+		if !p.is_dirty { continue }
+		out[index] = Atlas_Dirty_Snapshot{
+			page_index = u16(i), is_color = false,
+			x = p.dirty_min[0], y = p.dirty_min[1],
+			w = p.dirty_max[0] - p.dirty_min[0],
+			h = p.dirty_max[1] - p.dirty_min[1],
+			generation = p.dirty_generation,
+		}
+		index += 1
+	}
+	for &p, i in a.pages_color {
+		if !p.is_dirty { continue }
+		out[index] = Atlas_Dirty_Snapshot{
+			page_index = u16(i), is_color = true,
+			x = p.dirty_min[0], y = p.dirty_min[1],
+			w = p.dirty_max[0] - p.dirty_min[0],
+			h = p.dirty_max[1] - p.dirty_min[1],
+			generation = p.dirty_generation,
+		}
+		index += 1
+	}
+	return out
+}
+
+// atlas_dirty_ack clears only dirty state matching a previous snapshot.
+// Pass only entries whose pixels were safely captured and whose upload was
+// successfully submitted. GPU completion and upload-storage lifetime remain
+// the renderer's responsibility. A newer page write preserves the whole
+// accumulated dirty region, even if the rectangle did not change.
+// Repeated, out-of-range, or mismatched entries are ignored. Records must
+// come from this same live Atlas; this API adds no thread synchronization.
+// The slice is borrowed for this call and is neither retained nor freed.
+atlas_dirty_ack :: proc(a: ^Atlas, snapshot: []Atlas_Dirty_Snapshot) {
+	for dirty in snapshot {
+		pages := &a.pages_alpha
+		if dirty.is_color { pages = &a.pages_color }
+		if int(dirty.page_index) >= len(pages^) { continue }
+		p := &pages^[int(dirty.page_index)]
+		if !p.is_dirty || p.dirty_generation != dirty.generation { continue }
+		if p.dirty_min[0] != dirty.x || p.dirty_min[1] != dirty.y ||
+		   p.dirty_max[0] - p.dirty_min[0] != dirty.w ||
+		   p.dirty_max[1] - p.dirty_min[1] != dirty.h {
+			continue
+		}
+		p.is_dirty = false
+	}
 }
 
 atlas_flush_dirty :: proc(a: ^Atlas, allocator := context.allocator) -> []Atlas_Dirty {
