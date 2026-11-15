@@ -16,6 +16,7 @@ package parse
 // Reference: OpenType COLR — Color Table §9 (formats 4 / 6 / 8 and
 // ColorLine encoding).
 
+import "core:math"
 import "core:mem"
 
 // Color_Stop is one (offset, palette_index, alpha) record from a
@@ -75,6 +76,60 @@ Colr_Brush_Layer :: struct {
 	glyph_id:       Glyph_ID,
 	brush:          Colr_Brush,
 	composite_mode: u8,                                 // COMPOSITE_* constant; default SrcOver
+
+	// Transform paints (PaintTransform, PaintTranslate, PaintScale,
+	// PaintRotate, PaintSkew and their variants) map their child's
+	// coordinates into the parent's. Both matrices map to the base
+	// glyph's design space (font units, y up).
+	transformed:     bool,                              // false: both transforms are identity
+	glyph_transform: Affine,                            // transforms above the PaintGlyph: places the mask outline
+	brush_transform: Affine,                            // transforms above the fill (includes glyph_transform's): places the brush geometry
+}
+
+// Affine is a 2×3 affine transform, fields in the order of COLRv1's
+// Affine2x3 record:
+//
+//   x' = xx·x + xy·y + dx
+//   y' = yx·x + yy·y + dy
+//
+// Coordinates are font units, y up.
+Affine :: struct {
+	xx, yx, xy, yy: f32,                                // linear part
+	dx, dy:         f32,                                // translation
+}
+
+// AFFINE_IDENTITY maps every point to itself.
+AFFINE_IDENTITY :: Affine{xx = 1, yy = 1}
+
+// affine_multiply composes two transforms: the result applies `inner`
+// first, then `outer`. A child paint's transform is the inner one, so
+// walking down a paint tree accumulates `affine_multiply(parent, child)`.
+affine_multiply :: proc(outer, inner: Affine) -> Affine {
+	return Affine{
+		xx = outer.xx * inner.xx + outer.xy * inner.yx,
+		yx = outer.yx * inner.xx + outer.yy * inner.yx,
+		xy = outer.xx * inner.xy + outer.xy * inner.yy,
+		yy = outer.yx * inner.xy + outer.yy * inner.yy,
+		dx = outer.xx * inner.dx + outer.xy * inner.dy + outer.dx,
+		dy = outer.yx * inner.dx + outer.yy * inner.dy + outer.dy,
+	}
+}
+
+// affine_apply maps the point (`x`, `y`) through `m`.
+affine_apply :: proc(m: Affine, x, y: f32) -> (f32, f32) {
+	return m.xx * x + m.xy * y + m.dx, m.yx * x + m.yy * y + m.dy
+}
+
+// affine_invert returns the inverse of `m`, and false when `m` is
+// singular (a zero scale, for instance), which has none. Rasterizers use
+// it to map a pixel back into a brush's own coordinates.
+affine_invert :: proc(m: Affine) -> (Affine, bool) {
+	det := m.xx * m.yy - m.xy * m.yx
+	if abs(det) < 1e-12 { return {}, false }
+	inv := Affine{xx = m.yy / det, yx = -m.yx / det, xy = -m.xy / det, yy = m.xx / det}
+	inv.dx = -(inv.xx * m.dx + inv.xy * m.dy)
+	inv.dy = -(inv.yx * m.dx + inv.yy * m.dy)
+	return inv, true
 }
 
 // COLRv1 composite-mode constants per OpenType COLR spec.
@@ -119,32 +174,11 @@ colr_v1_brush_layers :: proc(c: ^Colr, gid: Glyph_ID, out: ^[dynamic]Colr_Brush_
 	if c.version < 1 || c.base_glyph_list_off == 0 || c.v1_paint_count == 0 {
 		return false
 	}
-	d := c.data
-	bgl_off := c.base_glyph_list_off
-
-	records_base := bgl_off + 4
-	if u64(records_base) + u64(c.v1_paint_count) * 6 > u64(len(d)) { return false }
-
-	lo, hi := 0, int(c.v1_paint_count)
-	for lo < hi {
-		mid := (lo + hi) / 2
-		p := records_base + u32(mid) * 6
-		g := u16(d[p])<<8 | u16(d[p + 1])
-		switch {
-		case u16(gid) == g:
-			paint_rel := u32(d[p + 2])<<24 | u32(d[p + 3])<<16 |
-			             u32(d[p + 4])<<8 | u32(d[p + 5])
-			paint_abs := bgl_off + paint_rel
-			ctx := Brush_Walk_Ctx{c = c, out = out, allocator = allocator, pending_composite = COMPOSITE_SRC_OVER}
-			walk_brush(&ctx, paint_abs, 0xFFFF, 0)
-			return true
-		case u16(gid) < g:
-			hi = mid
-		case:
-			lo = mid + 1
-		}
-	}
-	return false
+	paint_abs := find_v1_base_paint(c, gid) or_return
+	ctx := Brush_Walk_Ctx{c = c, out = out, allocator = allocator, pending_composite = COMPOSITE_SRC_OVER,
+	                      transform = AFFINE_IDENTITY, glyph_transform = AFFINE_IDENTITY}
+	walk_brush(&ctx, paint_abs, 0xFFFF, 0)
+	return true
 }
 
 // colr_brush_layers_destroy frees per-layer stop slices and the
@@ -163,6 +197,8 @@ Brush_Walk_Ctx :: struct {
 	out:              ^[dynamic]Colr_Brush_Layer,
 	allocator:        mem.Allocator,
 	pending_composite: u8,                              // composite mode to apply to next emitted layer
+	transform:        Affine,                           // the transforms walked through to here
+	glyph_transform:  Affine,                           // `transform` at the pending PaintGlyph
 }
 
 @(private)
@@ -278,7 +314,10 @@ walk_brush :: proc(ctx: ^Brush_Walk_Ctx, off: u32, pending_glyph: u16, depth: in
 		if u64(off) + 6 > u64(len(d)) { return }
 		paint_rel := u32(d[off + 1])<<16 | u32(d[off + 2])<<8 | u32(d[off + 3])
 		mask_glyph := u16(d[off + 4])<<8 | u16(d[off + 5])
+		saved := ctx.glyph_transform
+		ctx.glyph_transform = ctx.transform
 		walk_brush(ctx, off + paint_rel, mask_glyph, depth + 1)
+		ctx.glyph_transform = saved
 
 	case PAINT_COLR_GLYPH:
 		if u64(off) + 3 > u64(len(d)) { return }
@@ -305,13 +344,22 @@ walk_brush :: proc(ctx: ^Brush_Walk_Ctx, off: u32, pending_glyph: u16, depth: in
 	     PAINT_TRANSLATE, PAINT_VAR_TRANSLATE,
 	     PAINT_SCALE, PAINT_SCALE_VAR,
 	     PAINT_SCALE_AROUND_CENTER, PAINT_VAR_SCALE_AROUND_CENTER,
+	     PAINT_SCALE_UNIFORM, PAINT_VAR_SCALE_UNIFORM,
+	     PAINT_SCALE_UNIFORM_AROUND_CENTER, PAINT_VAR_SCALE_UNIFORM_AROUND_CENTER,
 	     PAINT_ROTATE, PAINT_VAR_ROTATE,
 	     PAINT_ROTATE_AROUND_CENTER, PAINT_VAR_ROTATE_AROUND_CENTER,
 	     PAINT_SKEW, PAINT_VAR_SKEW,
 	     PAINT_SKEW_AROUND_CENTER, PAINT_VAR_SKEW_AROUND_CENTER:
 		if u64(off) + 4 > u64(len(d)) { return }
 		child_rel := u32(d[off + 1])<<16 | u32(d[off + 2])<<8 | u32(d[off + 3])
+		// The child is drawn through this transform (variations at their
+		// default values: the Var formats share the static layout).
+		m, ok := paint_transform(d, off, format)
+		if !ok { return }
+		saved := ctx.transform
+		ctx.transform = affine_multiply(ctx.transform, m)
 		walk_brush(ctx, off + child_rel, pending_glyph, depth + 1)
+		ctx.transform = saved
 
 	case PAINT_COMPOSITE:
 		// PaintComposite: format u8, sourcePaint Offset24, mode u8,
@@ -338,13 +386,83 @@ emit_brush :: proc(ctx: ^Brush_Walk_Ctx, mask_glyph: u16, b: Colr_Brush) {
 		return
 	}
 	append(ctx.out, Colr_Brush_Layer{
-		glyph_id       = Glyph_ID(mask_glyph),
-		brush          = b,
-		composite_mode = ctx.pending_composite,
+		glyph_id        = Glyph_ID(mask_glyph),
+		brush           = b,
+		composite_mode  = ctx.pending_composite,
+		transformed     = ctx.transform != AFFINE_IDENTITY || ctx.glyph_transform != AFFINE_IDENTITY,
+		glyph_transform = ctx.glyph_transform,
+		brush_transform = ctx.transform,
 	})
 	// One emit consumes the pending composite mode — subsequent layers
 	// at the same level default back to SrcOver.
 	ctx.pending_composite = COMPOSITE_SRC_OVER
+}
+
+// paint_transform reads the matrix of the transform paint at `off`
+// (format byte, child Offset24, then the format's fields), per the
+// OpenType COLR spec: Fixed 16.16 in Affine2x3 (behind an Offset24),
+// FWORD for translations and centres, F2DOT14 for scales and for
+// angles (in half turns: 1.0 is 180 degrees). Rotation angles are
+// counter-clockwise. The variable (Var) formats share the static
+// formats' layout up to their VarIndexBase, so they read with their
+// default values: variations are not applied.
+@(private)
+paint_transform :: proc(d: []u8, off: u32, format: u8) -> (m: Affine, ok: bool) {
+	i16_at :: proc(d: []u8, at: u32) -> f32 { return f32(i16(u16(d[at])<<8 | u16(d[at + 1]))) }
+	f2dot14 :: proc(d: []u8, at: u32) -> f32 { return i16_at(d, at) / 16384.0 }
+	fixed :: proc(d: []u8, at: u32) -> f32 {
+		return f32(i32(u32(d[at])<<24 | u32(d[at + 1])<<16 | u32(d[at + 2])<<8 | u32(d[at + 3]))) / 65536.0
+	}
+	need :: proc(d: []u8, off, size: u32) -> bool { return u64(off) + u64(size) <= u64(len(d)) }
+	around :: proc(m: Affine, cx, cy: f32) -> Affine {
+		to := Affine{xx = 1, yy = 1, dx = cx, dy = cy}
+		from := Affine{xx = 1, yy = 1, dx = -cx, dy = -cy}
+		return affine_multiply(to, affine_multiply(m, from))
+	}
+	PI :: f32(3.14159265358979)
+	f := off + 4 // the fields after format and child offset
+	switch format {
+	case PAINT_TRANSFORM, PAINT_VAR_TRANSFORM:
+		need(d, off, 7) or_return
+		at := off + (u32(d[off + 4])<<16 | u32(d[off + 5])<<8 | u32(d[off + 6]))
+		need(d, at, 24) or_return
+		return Affine{xx = fixed(d, at), yx = fixed(d, at + 4), xy = fixed(d, at + 8),
+		              yy = fixed(d, at + 12), dx = fixed(d, at + 16), dy = fixed(d, at + 20)}, true
+	case PAINT_TRANSLATE, PAINT_VAR_TRANSLATE:
+		need(d, f, 4) or_return
+		return Affine{xx = 1, yy = 1, dx = i16_at(d, f), dy = i16_at(d, f + 2)}, true
+	case PAINT_SCALE, PAINT_SCALE_VAR:
+		need(d, f, 4) or_return
+		return Affine{xx = f2dot14(d, f), yy = f2dot14(d, f + 2)}, true
+	case PAINT_SCALE_AROUND_CENTER, PAINT_VAR_SCALE_AROUND_CENTER:
+		need(d, f, 8) or_return
+		return around(Affine{xx = f2dot14(d, f), yy = f2dot14(d, f + 2)}, i16_at(d, f + 4), i16_at(d, f + 6)), true
+	case PAINT_SCALE_UNIFORM, PAINT_VAR_SCALE_UNIFORM:
+		need(d, f, 2) or_return
+		s := f2dot14(d, f)
+		return Affine{xx = s, yy = s}, true
+	case PAINT_SCALE_UNIFORM_AROUND_CENTER, PAINT_VAR_SCALE_UNIFORM_AROUND_CENTER:
+		need(d, f, 6) or_return
+		s := f2dot14(d, f)
+		return around(Affine{xx = s, yy = s}, i16_at(d, f + 2), i16_at(d, f + 4)), true
+	case PAINT_ROTATE, PAINT_VAR_ROTATE, PAINT_ROTATE_AROUND_CENTER, PAINT_VAR_ROTATE_AROUND_CENTER:
+		need(d, f, 2) or_return
+		a := f2dot14(d, f) * PI
+		c, s := math.cos(a), math.sin(a)
+		r := Affine{xx = c, yx = s, xy = -s, yy = c}
+		if format == PAINT_ROTATE || format == PAINT_VAR_ROTATE { return r, true }
+		need(d, f, 6) or_return
+		return around(r, i16_at(d, f + 2), i16_at(d, f + 4)), true
+	case PAINT_SKEW, PAINT_VAR_SKEW, PAINT_SKEW_AROUND_CENTER, PAINT_VAR_SKEW_AROUND_CENTER:
+		need(d, f, 4) or_return
+		// The x angle leans vertical lines away from the y axis (towards
+		// -x for a positive angle); the y angle leans horizontal ones.
+		k := Affine{xx = 1, yx = math.tan(f2dot14(d, f + 2) * PI), xy = math.tan(-f2dot14(d, f) * PI), yy = 1}
+		if format == PAINT_SKEW || format == PAINT_VAR_SKEW { return k, true }
+		need(d, f, 8) or_return
+		return around(k, i16_at(d, f + 4), i16_at(d, f + 6)), true
+	}
+	return {}, false
 }
 
 // read_color_line parses a ColorLine record at `abs_off`:

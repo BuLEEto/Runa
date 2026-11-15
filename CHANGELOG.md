@@ -19,6 +19,42 @@ new optional features) live under `### Added` / `### Changed`.
   made after the snapshot even when the dirty rectangle is unchanged. Snapshot
   metadata uses the caller's allocator; pixel storage stays atlas-owned. The
   existing `atlas_flush_dirty` API and behavior are unchanged. (#2)
+- **`parse.Affine`** (2×3 transform in Affine2x3 order) with
+  `AFFINE_IDENTITY`, `affine_multiply`, `affine_apply` and `affine_invert`,
+  and the `transformed` / `glyph_transform` / `brush_transform` fields on
+  `Colr_Brush_Layer` (layers without transforms have `transformed = false`).
+  Code that builds a `Colr_Brush_Layer` with a positional literal
+  (`{gid, brush, mode}`) no longer compiles; named fields
+  (`{glyph_id = …, brush = …}`) are unaffected.
+
+### Changed
+
+- **`parse.PAINT_ROTATE*` and `parse.PAINT_SKEW*` take their spec values**
+  (24–27 and 28–31; they were 20–27, overlapping PaintScaleUniform's 20–23).
+  Comparisons against format bytes read from a font are now correct; code
+  that relied on the old numbers themselves sees the new ones.
+
+### Fixed
+
+- **COLRv1 transform paints are applied.** PaintTransform, PaintTranslate,
+  PaintScale, PaintRotate, PaintSkew and their around-centre and variable
+  forms were walked through but their matrices ignored, so every layer drew
+  untransformed. Fonts that place gradients through transforms — Segoe UI
+  Emoji does it for nearly every face — rendered with gradients in the wrong
+  place (brown and purple faces instead of yellow). The paint walker now
+  composes the transforms: those above a PaintGlyph place its outline
+  (`Colr_Brush_Layer.glyph_transform`), those above the fill place the
+  brush (`brush_transform`), and `rasterize_colr_brush_layers` applies both.
+  Variable forms read their default values (no variations yet).
+- **Skew and uniform-scale paints no longer drop their subtree.** The
+  `PAINT_*` constants for formats 20–31 were shifted by four (rotate was
+  numbered 20, skew 24), so PaintSkew (28–31) fell through as unknown and
+  everything under it was skipped. They now follow the spec, and
+  PaintScaleUniform (20–23) is handled.
+- **COLRv1-only glyphs are colour glyphs.** `colr_is_base` (and so
+  `font_has_color_layers`) only looked at version 0 records, so a font that
+  ships its colour glyphs only in the COLRv1 BaseGlyphList — Noto Color
+  Emoji's COLRv1 build — was rasterized in monochrome.
 
 ## 1.5.3 — 2026-10-25
 

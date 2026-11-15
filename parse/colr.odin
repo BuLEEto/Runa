@@ -134,9 +134,41 @@ colr_layers :: proc(c: ^Colr, gid: Glyph_ID, allocator := context.allocator) -> 
 // colr_is_base reports whether `gid` is a colour base glyph — useful
 // for the rasterizer's branching ("should I use the alpha pipeline or
 // the colour pipeline?").
+//
+// A COLRv1 font may carry glyphs only in its BaseGlyphList (with no v0
+// fallback record), so both lists are consulted.
 colr_is_base :: proc(c: ^Colr, gid: Glyph_ID) -> bool {
+	if _, found := find_v1_base_paint(c, gid); found { return true }
 	_, _, ok := find_base_glyph_record(c, gid)
 	return ok
+}
+
+// find_v1_base_paint binary-searches the COLRv1 BaseGlyphList for
+// `gid`. Returns the absolute offset of its root Paint on hit.
+@(private)
+find_v1_base_paint :: proc(c: ^Colr, gid: Glyph_ID) -> (paint_abs: u32, ok: bool) {
+	if c.version < 1 || c.base_glyph_list_off == 0 || c.v1_paint_count == 0 { return }
+	d := c.data
+	bgl_off := c.base_glyph_list_off
+	records_base := bgl_off + 4
+	if u64(records_base) + u64(c.v1_paint_count) * 6 > u64(len(d)) { return }
+
+	lo, hi := 0, int(c.v1_paint_count)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		p := records_base + u32(mid) * 6
+		g := u16(d[p])<<8 | u16(d[p + 1])
+		switch {
+		case u16(gid) == g:
+			paint_rel := u32(d[p + 2])<<24 | u32(d[p + 3])<<16 | u32(d[p + 4])<<8 | u32(d[p + 5])
+			return bgl_off + paint_rel, true
+		case u16(gid) < g:
+			hi = mid
+		case:
+			lo = mid + 1
+		}
+	}
+	return
 }
 
 // find_base_glyph_record binary-searches the sorted base-glyph-records

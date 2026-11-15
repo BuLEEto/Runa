@@ -46,6 +46,8 @@ rasterize_colr_brush_layers :: proc(
 		x_off, y_off:   int,
 		brush:          parse.Colr_Brush,
 		composite_mode: u8,
+		transformed:    bool,                               // the layer has a brush transform
+		brush_inverse:  parse.Affine,                       // maps design-space points back into the brush's own space
 	}
 	renders := make([dynamic]Layer_Render, 0, len(layers), context.temp_allocator)
 	defer {
@@ -60,13 +62,25 @@ rasterize_colr_brush_layers :: proc(
 		if oerr != .None { continue }
 		if len(outline.contour_ends) == 0 { continue }
 
+		brush_inverse := parse.AFFINE_IDENTITY
+		if lyr.transformed {
+			// Place the outline by the transforms above its PaintGlyph;
+			// the brush is drawn through the inverse of its own, so a
+			// pixel asks the brush where it came from.
+			inverse, invertible := parse.affine_invert(lyr.brush_transform)
+			if !invertible { continue }
+			brush_inverse = inverse
+			transform_outline(&outline, lyr.glyph_transform)
+		}
+
 		layer_bm, xo, yo, rerr := rasterize(&outline, units_per_em, size, edges, allocator = allocator)
 		if rerr != .None { continue }
 		if layer_bm.width == 0 || layer_bm.height == 0 {
 			bitmap_destroy(&layer_bm, allocator)
 			continue
 		}
-		append(&renders, Layer_Render{bitmap = layer_bm, x_off = xo, y_off = yo, brush = lyr.brush, composite_mode = lyr.composite_mode})
+		append(&renders, Layer_Render{bitmap = layer_bm, x_off = xo, y_off = yo, brush = lyr.brush, composite_mode = lyr.composite_mode,
+		                                  transformed = lyr.transformed, brush_inverse = brush_inverse})
 	}
 	if len(renders) == 0 { return }
 
@@ -102,15 +116,15 @@ rasterize_colr_brush_layers :: proc(
 		// Pre-compute gradient parameters in pixel-space for fast
 		// per-pixel evaluation. Each kind uses a different eval struct
 		// because the math diverges (line projection / quadratic /
-		// atan2); the shared piece is the layer-origin pixel-space
-		// transform.
+		// atan2). Each takes the pixel centre in the canvas's pixel space
+		// (baseline-relative, y down), after the brush transform.
 		linear: Linear_Eval
 		radial: Radial_Eval
 		sweep:  Sweep_Eval
 		switch r.brush.kind {
-		case .Linear: linear = init_linear_eval(r.brush, pixel_scale, r.x_off, r.y_off, r.bitmap.height)
-		case .Radial: radial = init_radial_eval(r.brush, pixel_scale, r.x_off, r.y_off)
-		case .Sweep:  sweep  = init_sweep_eval(r.brush,  pixel_scale, r.x_off, r.y_off)
+		case .Linear: linear = init_linear_eval(r.brush, pixel_scale, r.bitmap.height)
+		case .Radial: radial = init_radial_eval(r.brush, pixel_scale)
+		case .Sweep:  sweep  = init_sweep_eval(r.brush,  pixel_scale)
 		case .Solid:
 		}
 
@@ -123,15 +137,26 @@ rasterize_colr_brush_layers :: proc(
 				mask := r.bitmap.pixels[sy * r.bitmap.width + sx]
 				if mask == 0 { continue }
 
+				// The pixel centre in pixel space (baseline-relative, y
+				// down). Under a brush transform, the brush is evaluated
+				// where the inverse transform maps it: via design units
+				// (y up), where the transform is defined.
+				px := f32(r.x_off + sx) + 0.5
+				py := f32(r.y_off + sy) + 0.5
+				if r.transformed {
+					fx, fy := parse.affine_apply(r.brush_inverse, px / pixel_scale, -py / pixel_scale)
+					px, py = fx * pixel_scale, -fy * pixel_scale
+				}
+
 				// Resolve the brush colour for this pixel.
 				color: [4]u8
 				switch r.brush.kind {
 				case .Linear:
-					color = eval_linear(linear, &r.brush, palette, palette_idx, foreground, sx, sy)
+					color = eval_linear(linear, &r.brush, palette, palette_idx, foreground, px, py)
 				case .Radial:
-					color = eval_radial(radial, &r.brush, palette, palette_idx, foreground, sx, sy)
+					color = eval_radial(radial, &r.brush, palette, palette_idx, foreground, px, py)
 				case .Sweep:
-					color = eval_sweep(sweep, &r.brush, palette, palette_idx, foreground, sx, sy)
+					color = eval_sweep(sweep, &r.brush, palette, palette_idx, foreground, px, py)
 				case .Solid:
 					color = solid_color(r.brush, palette, palette_idx, foreground)
 				}
@@ -142,6 +167,26 @@ rasterize_colr_brush_layers :: proc(
 		}
 	}
 	return
+}
+
+// transform_outline maps every point of `o` through `m` (design units)
+// and recomputes its bounds, from which `rasterize` sizes the bitmap.
+// Points stay integer design units, so they round to the nearest unit:
+// at most half a unit off, far below a pixel at text sizes.
+@(private)
+transform_outline :: proc(o: ^parse.Outline, m: parse.Affine) {
+	if len(o.points) == 0 { return }
+	x_min, y_min := max(i32), max(i32)
+	x_max, y_max := min(i32), min(i32)
+	for &p in o.points {
+		x, y := parse.affine_apply(m, f32(p.x), f32(p.y))
+		p.x, p.y = i32(math.round(x)), i32(math.round(y))
+		x_min, y_min = min(x_min, p.x), min(y_min, p.y)
+		x_max, y_max = max(x_max, p.x), max(y_max, p.y)
+	}
+	clamp16 :: proc(v: i32) -> i16 { return i16(clamp(v, i32(min(i16)), i32(max(i16)))) }
+	o.x_min, o.y_min = clamp16(x_min), clamp16(y_min)
+	o.x_max, o.y_max = clamp16(x_max), clamp16(y_max)
 }
 
 // composite_pixel applies one COLRv1 composite mode over a single
@@ -508,17 +553,13 @@ Linear_Eval :: struct {
 	px0, py0:  f32,
 	px1, py1:  f32,
 	len_sq:    f32,                                    // |p1 - p0|² in pixel-space units
-	// Layer origin in pixel-space (top-left of the bitmap, in the
-	// same coord system as endpoints).
-	origin_x:  f32,
-	origin_y:  f32,
-	// Pixel-row Y flip: glyph mask rows are y-down from origin_y;
+	// Pixel-row Y flip: glyph mask rows are y-down;
 	// gradient endpoints come from font-unit y-up coords.
 	height_px: int,
 }
 
 @(private)
-init_linear_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32, layer_x_off, layer_y_off, height_px: int) -> Linear_Eval {
+init_linear_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32, height_px: int) -> Linear_Eval {
 	// Convert font-unit endpoints to pixel-space. The y axis flips
 	// because glyf y-up vs raster y-down.
 	px0 := b.p0[0] * pixel_scale
@@ -531,27 +572,21 @@ init_linear_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32, layer_x_off, lay
 		px0 = px0, py0 = py0,
 		px1 = px1, py1 = py1,
 		len_sq    = dx * dx + dy * dy,
-		origin_x  = f32(layer_x_off),
-		origin_y  = f32(layer_y_off),
 		height_px = height_px,
 	}
 }
 
-// eval_linear computes the gradient colour at pixel (sx, sy) inside
-// the current layer's bitmap.
+// eval_linear computes the gradient colour at the pixel centre (px, py),
+// in pixel space (baseline-relative, y down; the endpoints' frame).
 @(private)
-eval_linear :: proc(g: Linear_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, palette_idx: u16, foreground: [4]u8, sx, sy: int) -> [4]u8 {
+eval_linear :: proc(g: Linear_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, palette_idx: u16, foreground: [4]u8, px, py: f32) -> [4]u8 {
 	if g.len_sq <= 1e-6 || len(b.stops) == 0 {
 		// Degenerate gradient — fall back to first stop or foreground.
 		return solid_color(b^, palette, palette_idx, foreground)
 	}
-	// Pixel centre coords in pixel-space (same frame as endpoints).
-	abs_x := g.origin_x + f32(sx) + 0.5
-	abs_y := g.origin_y + f32(sy) + 0.5
-
 	// Project onto (p0, p1).
-	vx := abs_x - g.px0
-	vy := abs_y - g.py0
+	vx := px - g.px0
+	vy := py - g.py0
 	dx := g.px1 - g.px0
 	dy := g.py1 - g.py0
 	t := (vx * dx + vy * dy) / g.len_sq
@@ -614,12 +649,10 @@ Radial_Eval :: struct {
 	cx0, cy0:  f32,
 	cx1, cy1:  f32,
 	r0,  r1:   f32,
-	origin_x:  f32,
-	origin_y:  f32,
 }
 
 @(private)
-init_radial_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32, layer_x_off, layer_y_off: int) -> Radial_Eval {
+init_radial_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32) -> Radial_Eval {
 	return Radial_Eval{
 		cx0      =  b.p0[0] * pixel_scale,
 		cy0      = -b.p0[1] * pixel_scale,
@@ -627,20 +660,17 @@ init_radial_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32, layer_x_off, lay
 		cy1      = -b.p1[1] * pixel_scale,
 		r0       =  b.r0 * pixel_scale,
 		r1       =  b.r1 * pixel_scale,
-		origin_x = f32(layer_x_off),
-		origin_y = f32(layer_y_off),
 	}
 }
 
 // eval_radial solves for the gradient parameter t such that the
 // interpolated circle (center (1-t)c0 + t c1, radius (1-t)r0 + t r1)
-// passes through the pixel. The smaller non-negative real root of
+// passes through the pixel centre (px, py), in pixel space as for
+// eval_linear. The smaller non-negative real root of
 // the quadratic in t wins.
 @(private)
-eval_radial :: proc(g: Radial_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, palette_idx: u16, foreground: [4]u8, sx, sy: int) -> [4]u8 {
+eval_radial :: proc(g: Radial_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, palette_idx: u16, foreground: [4]u8, px, py: f32) -> [4]u8 {
 	if len(b.stops) == 0 { return solid_color(b^, palette, palette_idx, foreground) }
-	px := g.origin_x + f32(sx) + 0.5
-	py := g.origin_y + f32(sy) + 0.5
 
 	// Quadratic:  |p - ((1-t)c0 + t c1)|² = ((1-t)r0 + t r1)²
 	// Expand:     a t² + b t + c = 0  with
@@ -683,27 +713,21 @@ eval_radial :: proc(g: Radial_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, 
 Sweep_Eval :: struct {
 	cx, cy:      f32,
 	start, end:  f32,                                  // angles, radians
-	origin_x:    f32,
-	origin_y:    f32,
 }
 
 @(private)
-init_sweep_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32, layer_x_off, layer_y_off: int) -> Sweep_Eval {
+init_sweep_eval :: proc(b: parse.Colr_Brush, pixel_scale: f32) -> Sweep_Eval {
 	return Sweep_Eval{
 		cx       =  b.p0[0] * pixel_scale,
 		cy       = -b.p0[1] * pixel_scale,
 		start    =  b.angle_start,
 		end      =  b.angle_end,
-		origin_x = f32(layer_x_off),
-		origin_y = f32(layer_y_off),
 	}
 }
 
 @(private)
-eval_sweep :: proc(g: Sweep_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, palette_idx: u16, foreground: [4]u8, sx, sy: int) -> [4]u8 {
+eval_sweep :: proc(g: Sweep_Eval, b: ^parse.Colr_Brush, palette: ^parse.Cpal, palette_idx: u16, foreground: [4]u8, px, py: f32) -> [4]u8 {
 	if len(b.stops) == 0 { return solid_color(b^, palette, palette_idx, foreground) }
-	px := g.origin_x + f32(sx) + 0.5
-	py := g.origin_y + f32(sy) + 0.5
 	// y is flipped in pixel-space relative to font-unit space, but
 	// the gradient endpoints arrived in font-units. atan2 with the
 	// already-flipped (cx, cy) gives a consistent rotation direction.
